@@ -42,64 +42,46 @@ const path = require('path');
     await page.waitForTimeout(8000);
     console.log('URL actual:', page.url());
 
-    // 7. Usar el buscador global "Buscar en Siigo"
-    console.log('7. Abriendo "Buscar en Siigo"...');
+    // Analizar frames
+    console.log('Frames en la pagina:', page.frames().map(f => f.url()));
+
+    // Buscar en el HTML
+    const html = await page.content();
+    fs.writeFileSync('siigo_page.html', html);
+    console.log('HTML guardado. Contiene "reporte":', html.toLowerCase().includes('reporte'));
+    console.log('HTML contiene "informe":', html.toLowerCase().includes('informe'));
+    console.log('HTML contiene "contabilidad":', html.toLowerCase().includes('contabilidad'));
+
+    // Inspeccionar que ocurre con "Buscar en Siigo"
+    console.log('7. Pulsando "Buscar en Siigo"...');
     const searchBtn = page.locator('button[aria-label="Buscar en Siigo"]').first();
-    await searchBtn.waitFor({ state: 'visible', timeout: 15000 });
     await searchBtn.click();
     await page.waitForTimeout(1500);
 
-    console.log('8. Escribiendo nombre del reporte en el buscador...');
     const searchInput = page.locator('input[placeholder*="Buscar" i], input[type="search"], input[type="text"]:visible').first();
-    await searchInput.waitFor({ state: 'visible', timeout: 10000 });
-    await searchInput.fill('Movimiento auxiliar de tercero por cuenta contable');
-    await page.waitForTimeout(2500);
+    await searchInput.fill('movimiento auxiliar');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(3000);
 
-    // Listar resultados encontrados
-    const foundOptions = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('li, [role="option"], a, div'))
+    // Listar todos los textos visibles tras la busqueda
+    const searchTexts = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('li, [role="option"], a, p, span, h6'))
         .map(el => (el.innerText || '').trim())
-        .filter(t => /movimiento auxiliar/i.test(t) && t.length < 80);
+        .filter(t => t.length > 3 && t.length < 70);
     });
-    console.log('Resultados de busqueda detectados:', Array.from(new Set(foundOptions)));
+    console.log('Textos detectados tras busqueda:', Array.from(new Set(searchTexts)).slice(0, 30));
 
-    // Seleccionar la opcion que corresponda al reporte
-    const reportOption = page.locator('li, [role="option"], a').filter({ hasText: /movimiento auxiliar de tercero por cuenta contable/i }).first();
-    await reportOption.waitFor({ state: 'visible', timeout: 15000 });
-    await reportOption.click();
-    console.log('9. Clic en el reporte realizado. Esperando pantalla del reporte...');
-    await page.waitForTimeout(5000);
-
-    console.log('URL de la pantalla del reporte:', page.url());
-
-    // 10. Identificar filtros y boton de exportar a Excel
-    console.log('10. Buscando boton de exportacion a Excel...');
-    const exportElements = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('button, a, [role="button"], span'))
-        .map(el => ({
-          text: (el.innerText || '').trim(),
-          aria: el.getAttribute('aria-label') || '',
-          title: el.getAttribute('title') || ''
-        }))
-        .filter(el => /excel|exportar|descargar/i.test(el.text) || /excel|exportar|descargar/i.test(el.aria) || /excel|exportar|descargar/i.test(el.title));
-    });
-    console.log('Botones de exportacion encontrados:', exportElements);
-
-    const [ download ] = await Promise.all([
-      page.waitForEvent('download', { timeout: 60000 }),
-      page.click('button:has-text("Excel"), button:has-text("Exportar a Excel"), [aria-label*="Excel" i], [title*="Excel" i], button:has-text("Exportar")')
-    ]);
-
-    const outputDir = path.join(__dirname, 'reportes');
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
+    // Si encontramos algun enlace con movimiento auxiliar, pulsar
+    const matched = page.locator('text=/movimiento auxiliar/i').first();
+    if (await matched.isVisible()) {
+      console.log('Enlace encontrado, pulsando...');
+      await matched.click();
+      await page.waitForTimeout(4000);
+    } else {
+      console.log('No se encontro por busqueda. Analizando navegacion directa...');
     }
 
-    const fecha = new Date().toISOString().split('T')[0];
-    const targetFile = path.join(outputDir, 'Movimiento_auxiliar_' + fecha + '.xlsx');
-    
-    await download.saveAs(targetFile);
-    console.log('11. Reporte guardado con exito en:', targetFile);
+    console.log('URL final:', page.url());
 
   } catch (error) {
     console.error('Error durante la ejecucion:', error.message || error);
