@@ -39,81 +39,63 @@ const path = require('path');
     console.log('5. Autenticacion exitosa. URL inicial:', page.url());
 
     console.log('6. Esperando carga del dashboard...');
-    await page.waitForTimeout(7000);
+    await page.waitForTimeout(8000);
 
     console.log('URL actual tras carga:', page.url());
     console.log('Titulo:', await page.title());
 
-    // Analisis exhaustivo de la interfaz
-    const domInfo = await page.evaluate(() => {
-      const allElements = Array.from(document.querySelectorAll('*'));
-      const reportMatches = [];
-      const menuCandidates = [];
-
-      for (const el of allElements) {
-        const text = (el.innerText || '').trim();
-        const aria = el.getAttribute('aria-label') || '';
-        const title = el.getAttribute('title') || '';
-        const id = el.id || '';
-        const cls = typeof el.className === 'string' ? el.className : '';
-
-        if (/reporte|informe/i.test(text) || /reporte|informe/i.test(aria) || /reporte|informe/i.test(title)) {
-          reportMatches.push({
-            tag: el.tagName.toLowerCase(),
-            text: text.substring(0, 50),
-            id,
-            cls: cls.substring(0, 40),
-            aria,
-            title
-          });
-        }
-
-        if (['A', 'BUTTON', 'LI'].includes(el.tagName) || el.getAttribute('role') === 'button') {
-          if (text && text.length > 1 && text.length < 35 && !text.includes('\n')) {
-            menuCandidates.push(text);
-          }
-        }
-      }
-
-      return {
-        reportMatches: reportMatches.slice(0, 15),
-        menuCandidates: Array.from(new Set(menuCandidates)).slice(0, 50)
-      };
+    // Analizar todos los botones y enlaces de la barra superior y lateral
+    const elementsInfo = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button, [role="button"], a')).map(b => ({
+        tag: b.tagName.toLowerCase(),
+        text: (b.innerText || '').trim(),
+        aria: b.getAttribute('aria-label') || '',
+        title: b.getAttribute('title') || '',
+        cls: (typeof b.className === 'string' ? b.className : '').substring(0, 50),
+        id: b.id || '',
+        href: b.getAttribute('href') || ''
+      }));
+      return buttons.filter(b => b.text || b.aria || b.title || b.href);
     });
 
-    console.log('Coincidencias con Reportes/Informes:', JSON.stringify(domInfo.reportMatches, null, 2));
-    console.log('Textos interactivos detectados:', domInfo.menuCandidates);
+    console.log('Botones y enlaces interactivos:', JSON.stringify(elementsInfo, null, 2));
 
-    // Si encontramos algún elemento que dice "Reportes", hagamos clic
-    console.log('7. Buscando y pulsando Reportes...');
-    const reportBtn = page.locator('text=/^Reportes$/i, a:has-text("Reportes"), button:has-text("Reportes"), [title*="Reportes"], [aria-label*="Reportes"]').first();
+    // Revisar si existe el boton de menu lateral (hamburguesa) o si Reportes ya esta visible
+    console.log('7. Buscando acceso a Reportes...');
     
-    if (await reportBtn.isVisible()) {
-      await reportBtn.click();
-      console.log('Boton de Reportes pulsado exitosamente');
-      await page.waitForTimeout(3000);
+    // Intento A: Si hay un texto visible directo que diga Reportes
+    const directReport = page.locator('a, button, span, li, p').filter({ hasText: /^Reportes$/i });
+    if (await directReport.count() > 0 && await directReport.first().isVisible()) {
+      console.log('Boton directo de Reportes encontrado, haciendo clic...');
+      await directReport.first().click();
     } else {
-      console.log('Reportes no visible de inmediato. Probando selectores alternativos...');
-      // Intentar buscar enlaces por href o iconos
-      const altReport = page.locator('a[href*="report"], [id*="report" i], [class*="report" i]').first();
-      if (await altReport.isVisible()) {
-        await altReport.click();
-        console.log('Pulsado enlace alternativo de reportes');
-        await page.waitForTimeout(3000);
-      } else {
-        // Forzar clic en el texto Reportes
-        await reportBtn.click({ force: true, timeout: 15000 });
+      console.log('Reportes no visible directamente. Buscando icono o menu lateral...');
+      // Buscar boton hamburguesa o boton con icono de menu
+      const menuButton = page.locator('button[aria-label*="menu" i], button[title*="menu" i], .navbar-toggle, .menu-toggle, [class*="hamburger"], [class*="menu-btn"]').first();
+      if (await menuButton.isVisible()) {
+        console.log('Pulsando boton de menu...');
+        await menuButton.click();
+        await page.waitForTimeout(2000);
       }
+      
+      // Probar si el enlace Reportes aparece ahora
+      const reportLink = page.locator('text=Reportes').first();
+      await reportLink.waitFor({ state: 'visible', timeout: 15000 });
+      await reportLink.click();
     }
 
-    console.log('8. Buscando reporte de movimiento auxiliar...');
+    console.log('8. Seccion Reportes abierta. Esperando opciones...');
+    await page.waitForTimeout(3000);
+
+    console.log('9. Buscando reporte de movimiento auxiliar...');
+    // Primero buscar si esta la opcion en pantalla
     const auxLocator = page.locator('text=/movimiento auxiliar de tercero por cuenta contable/i').first();
     await auxLocator.waitFor({ state: 'visible', timeout: 30000 });
     await auxLocator.click();
     console.log('Reporte seleccionado con exito');
     await page.waitForTimeout(3000);
 
-    console.log('9. Solicitando exportacion a Excel...');
+    console.log('10. Solicitando exportacion a Excel...');
     const [ download ] = await Promise.all([
       page.waitForEvent('download', { timeout: 60000 }),
       page.click('button:has-text("Excel"), button:has-text("Exportar a Excel"), [aria-label*="Excel"]')
@@ -128,7 +110,7 @@ const path = require('path');
     const targetFile = path.join(outputDir, 'Movimiento_auxiliar_' + fecha + '.xlsx');
     
     await download.saveAs(targetFile);
-    console.log('10. Reporte guardado con exito en:', targetFile);
+    console.log('11. Reporte guardado con exito en:', targetFile);
 
   } catch (error) {
     console.error('Error durante la ejecucion:', error.message || error);
