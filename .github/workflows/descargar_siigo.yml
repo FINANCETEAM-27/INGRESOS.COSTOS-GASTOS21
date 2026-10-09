@@ -1,0 +1,48 @@
+name: Descarga Nocturna Reporte Siigo
+
+on:
+  schedule:
+    # 11:00 PM Colombia (UTC-5) = 04:00 AM UTC del día siguiente
+    - cron: '0 4 * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente en cualquier momento
+
+jobs:
+  descargar:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # Permite al bot hacer commit del Excel en el repo
+
+    steps:
+      - name: Descargar código del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias y navegadores Playwright
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Ejecutar bot de descarga
+        env:
+          SIIGO_USER: ${{ secrets.SIIGO_USER }}
+          SIIGO_PASS: ${{ secrets.SIIGO_PASS }}
+        run: node descargar_reporte.js
+
+      - name: Guardar captura si hubo error
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: captura-error
+          path: error_screenshot.png
+
+      - name: Guardar reporte Excel en el repositorio
+        run: |
+          git config --global user.name "Bot Reportes Siigo"
+          git config --global user.email "bot-siigo@agilexpress.com.co"
+          git add reportes/*.xlsx
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(contabilidad): reporte auxiliar $(date +'%Y-%m-%d')" && git push)
