@@ -40,65 +40,54 @@ const path = require('path');
 
     console.log('6. Esperando carga del dashboard...');
     await page.waitForTimeout(8000);
+    console.log('URL actual:', page.url());
 
-    console.log('URL actual tras carga:', page.url());
-    console.log('Titulo:', await page.title());
+    // 7. Usar el buscador global "Buscar en Siigo"
+    console.log('7. Abriendo "Buscar en Siigo"...');
+    const searchBtn = page.locator('button[aria-label="Buscar en Siigo"]').first();
+    await searchBtn.waitFor({ state: 'visible', timeout: 15000 });
+    await searchBtn.click();
+    await page.waitForTimeout(1500);
 
-    // Analizar todos los botones y enlaces de la barra superior y lateral
-    const elementsInfo = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, [role="button"], a')).map(b => ({
-        tag: b.tagName.toLowerCase(),
-        text: (b.innerText || '').trim(),
-        aria: b.getAttribute('aria-label') || '',
-        title: b.getAttribute('title') || '',
-        cls: (typeof b.className === 'string' ? b.className : '').substring(0, 50),
-        id: b.id || '',
-        href: b.getAttribute('href') || ''
-      }));
-      return buttons.filter(b => b.text || b.aria || b.title || b.href);
+    console.log('8. Escribiendo nombre del reporte en el buscador...');
+    const searchInput = page.locator('input[placeholder*="Buscar" i], input[type="search"], input[type="text"]:visible').first();
+    await searchInput.waitFor({ state: 'visible', timeout: 10000 });
+    await searchInput.fill('Movimiento auxiliar de tercero por cuenta contable');
+    await page.waitForTimeout(2500);
+
+    // Listar resultados encontrados
+    const foundOptions = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('li, [role="option"], a, div'))
+        .map(el => (el.innerText || '').trim())
+        .filter(t => /movimiento auxiliar/i.test(t) && t.length < 80);
     });
+    console.log('Resultados de busqueda detectados:', Array.from(new Set(foundOptions)));
 
-    console.log('Botones y enlaces interactivos:', JSON.stringify(elementsInfo, null, 2));
+    // Seleccionar la opcion que corresponda al reporte
+    const reportOption = page.locator('li, [role="option"], a').filter({ hasText: /movimiento auxiliar de tercero por cuenta contable/i }).first();
+    await reportOption.waitFor({ state: 'visible', timeout: 15000 });
+    await reportOption.click();
+    console.log('9. Clic en el reporte realizado. Esperando pantalla del reporte...');
+    await page.waitForTimeout(5000);
 
-    // Revisar si existe el boton de menu lateral (hamburguesa) o si Reportes ya esta visible
-    console.log('7. Buscando acceso a Reportes...');
-    
-    // Intento A: Si hay un texto visible directo que diga Reportes
-    const directReport = page.locator('a, button, span, li, p').filter({ hasText: /^Reportes$/i });
-    if (await directReport.count() > 0 && await directReport.first().isVisible()) {
-      console.log('Boton directo de Reportes encontrado, haciendo clic...');
-      await directReport.first().click();
-    } else {
-      console.log('Reportes no visible directamente. Buscando icono o menu lateral...');
-      // Buscar boton hamburguesa o boton con icono de menu
-      const menuButton = page.locator('button[aria-label*="menu" i], button[title*="menu" i], .navbar-toggle, .menu-toggle, [class*="hamburger"], [class*="menu-btn"]').first();
-      if (await menuButton.isVisible()) {
-        console.log('Pulsando boton de menu...');
-        await menuButton.click();
-        await page.waitForTimeout(2000);
-      }
-      
-      // Probar si el enlace Reportes aparece ahora
-      const reportLink = page.locator('text=Reportes').first();
-      await reportLink.waitFor({ state: 'visible', timeout: 15000 });
-      await reportLink.click();
-    }
+    console.log('URL de la pantalla del reporte:', page.url());
 
-    console.log('8. Seccion Reportes abierta. Esperando opciones...');
-    await page.waitForTimeout(3000);
+    // 10. Identificar filtros y boton de exportar a Excel
+    console.log('10. Buscando boton de exportacion a Excel...');
+    const exportElements = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('button, a, [role="button"], span'))
+        .map(el => ({
+          text: (el.innerText || '').trim(),
+          aria: el.getAttribute('aria-label') || '',
+          title: el.getAttribute('title') || ''
+        }))
+        .filter(el => /excel|exportar|descargar/i.test(el.text) || /excel|exportar|descargar/i.test(el.aria) || /excel|exportar|descargar/i.test(el.title));
+    });
+    console.log('Botones de exportacion encontrados:', exportElements);
 
-    console.log('9. Buscando reporte de movimiento auxiliar...');
-    // Primero buscar si esta la opcion en pantalla
-    const auxLocator = page.locator('text=/movimiento auxiliar de tercero por cuenta contable/i').first();
-    await auxLocator.waitFor({ state: 'visible', timeout: 30000 });
-    await auxLocator.click();
-    console.log('Reporte seleccionado con exito');
-    await page.waitForTimeout(3000);
-
-    console.log('10. Solicitando exportacion a Excel...');
     const [ download ] = await Promise.all([
       page.waitForEvent('download', { timeout: 60000 }),
-      page.click('button:has-text("Excel"), button:has-text("Exportar a Excel"), [aria-label*="Excel"]')
+      page.click('button:has-text("Excel"), button:has-text("Exportar a Excel"), [aria-label*="Excel" i], [title*="Excel" i], button:has-text("Exportar")')
     ]);
 
     const outputDir = path.join(__dirname, 'reportes');
