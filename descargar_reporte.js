@@ -36,52 +36,69 @@ const path = require('path');
 
     console.log('4. Esperando redireccion a Siigo Nube...');
     await page.waitForURL(url => !url.href.includes('account.siigo.com'), { timeout: 60000 });
-    console.log('5. Autenticacion exitosa. URL inicial:', page.url());
+    console.log('5. Autenticacion exitosa.');
 
-    console.log('6. Esperando carga del dashboard...');
-    await page.waitForTimeout(8000);
-    console.log('URL actual:', page.url());
+    console.log('6. Esperando carga del entorno inicial...');
+    await page.waitForTimeout(6000);
 
-    // Analizar frames
-    console.log('Frames en la pagina:', page.frames().map(f => f.url()));
+    // Navegación directa o mediante buscador al reporte exacto
+    console.log('7. Navegando al reporte: Movimiento auxiliar de tercero por cuenta contable en Excel...');
+    await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(6000);
+    console.log('URL actual del reporte:', page.url());
 
-    // Buscar en el HTML
-    const html = await page.content();
-    fs.writeFileSync('siigo_page.html', html);
-    console.log('HTML guardado. Contiene "reporte":', html.toLowerCase().includes('reporte'));
-    console.log('HTML contiene "informe":', html.toLowerCase().includes('informe'));
-    console.log('HTML contiene "contabilidad":', html.toLowerCase().includes('contabilidad'));
-
-    // Inspeccionar que ocurre con "Buscar en Siigo"
-    console.log('7. Pulsando "Buscar en Siigo"...');
-    const searchBtn = page.locator('button[aria-label="Buscar en Siigo"]').first();
-    await searchBtn.click();
-    await page.waitForTimeout(1500);
-
-    const searchInput = page.locator('input[placeholder*="Buscar" i], input[type="search"], input[type="text"]:visible').first();
-    await searchInput.fill('movimiento auxiliar');
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(3000);
-
-    // Listar todos los textos visibles tras la busqueda
-    const searchTexts = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('li, [role="option"], a, p, span, h6'))
-        .map(el => (el.innerText || '').trim())
-        .filter(t => t.length > 3 && t.length < 70);
+    // Analizar formulario y botones en la pantalla del reporte
+    const controls = await page.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input, select, textarea')).map(i => ({
+        tag: i.tagName.toLowerCase(),
+        type: i.type,
+        name: i.name,
+        id: i.id,
+        placeholder: i.placeholder,
+        value: i.value
+      }));
+      const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]')).map(b => ({
+        tag: b.tagName.toLowerCase(),
+        text: (b.innerText || '').trim(),
+        aria: b.getAttribute('aria-label') || '',
+        title: b.getAttribute('title') || ''
+      })).filter(b => b.text || b.aria || b.title);
+      return { inputs, buttons };
     });
-    console.log('Textos detectados tras busqueda:', Array.from(new Set(searchTexts)).slice(0, 30));
 
-    // Si encontramos algun enlace con movimiento auxiliar, pulsar
-    const matched = page.locator('text=/movimiento auxiliar/i').first();
-    if (await matched.isVisible()) {
-      console.log('Enlace encontrado, pulsando...');
-      await matched.click();
-      await page.waitForTimeout(4000);
-    } else {
-      console.log('No se encontro por busqueda. Analizando navegacion directa...');
+    console.log('Campos detectados en el formulario:', JSON.stringify(controls.inputs, null, 2));
+    console.log('Botones detectados:', JSON.stringify(controls.buttons, null, 2));
+
+    // Buscar boton de Generar reporte o Descargar
+    console.log('8. Solicitando generacion y descarga de Excel...');
+    const generateBtn = page.locator('button, a, [role="button"]').filter({ hasText: /generar reporte|descargar|buscar|exportar/i }).first();
+    await generateBtn.waitFor({ state: 'visible', timeout: 20000 });
+    
+    // Preparar escucha de descarga
+    const [ download ] = await Promise.all([
+      page.waitForEvent('download', { timeout: 90000 }),
+      (async () => {
+        await generateBtn.click();
+        await page.waitForTimeout(2000);
+        // Si aparece un submenu o modal para elegir Excel vs TXT
+        const excelChoice = page.locator('button, a, li, span').filter({ hasText: /^Excel$/i, hasNotText: /txt/i });
+        if (await excelChoice.count() > 0 && await excelChoice.first().isVisible()) {
+          console.log('Seleccionando opcion Excel en modal...');
+          await excelChoice.first().click();
+        }
+      })()
+    ]);
+
+    const outputDir = path.join(__dirname, 'reportes');
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    console.log('URL final:', page.url());
+    const fecha = new Date().toISOString().split('T')[0];
+    const targetFile = path.join(outputDir, 'Movimiento_auxiliar_' + fecha + '.xlsx');
+    
+    await download.saveAs(targetFile);
+    console.log('9. Reporte guardado con exito en:', targetFile);
 
   } catch (error) {
     console.error('Error durante la ejecucion:', error.message || error);
