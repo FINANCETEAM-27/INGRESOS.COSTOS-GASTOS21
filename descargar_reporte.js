@@ -19,7 +19,7 @@ const path = require('path');
   }
 
   try {
-    console.log('1. Abriendo pantalla de autenticación de Siigo...');
+    console.log('1. Abriendo pantalla de autenticacion de Siigo...');
     await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'networkidle', timeout: 60000 });
 
     console.log('2. Ingresando credenciales...');
@@ -34,32 +34,28 @@ const path = require('path');
     const nextBtn = page.locator('#siigoNext');
     await nextBtn.click();
 
-    console.log('4. Esperando redirección de Azure B2C a Siigo Nube...');
-    // Esperar hasta que la URL ya no sea account.siigo.com
+    console.log('4. Esperando redireccion de Azure B2C a Siigo Nube...');
     await page.waitForURL(url => !url.href.includes('account.siigo.com'), { timeout: 60000 });
-    console.log('5. Autenticación exitosa. URL actual:', page.url());
+    console.log('5. Autenticacion exitosa. URL actual:', page.url());
 
-    // Esperar a que cargue la interfaz principal de Siigo Nube
     console.log('6. Esperando carga del entorno de Siigo...');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(6000);
 
     console.log('URL tras carga:', page.url());
-    console.log('Título de la página:', await page.title());
+    console.log('Titulo de la pagina:', await page.title());
 
-    // Si hay un modal o diálogo emergente de bienvenida/novedades, intentar cerrarlo
+    // Si hay un modal o diálogo emergente, intentar cerrarlo
     const closeButtons = page.locator('button[aria-label="Close"], button:has-text("Cerrar"), button:has-text("Entendido"), .modal-close');
     if (await closeButtons.count() > 0) {
       console.log('Cerrando ventana emergente detectada...');
       await closeButtons.first().click().catch(() => {});
     }
 
-    // Listar enlaces visibles de navegación para diagnóstico
     const navItems = await page.locator('nav a, aside a, .sidebar a, [role="navigation"] a').allInnerTexts().catch(() => []);
-    console.log('Opciones de navegación encontradas:', navItems.filter(t => t.trim()));
+    console.log('Opciones de navegacion encontradas:', navItems.filter(t => t.trim()));
 
-    // Buscar menú Reportes con selectores flexibles
-    console.log('7. Buscando menú Reportes...');
+    console.log('7. Buscando menu Reportes...');
     const reportesLocator = page.locator('text=Reportes, a:has-text("Reportes"), [aria-label*="Reportes"], button:has-text("Reportes")').first();
     await reportesLocator.waitFor({ state: 'visible', timeout: 30000 });
     await reportesLocator.click();
@@ -73,8 +69,7 @@ const path = require('path');
     console.log('Reporte seleccionado');
     await page.waitForTimeout(3000);
 
-    // Preparar captura de la descarga
-    console.log('9. Solicitando exportación a Excel...');
+    console.log('9. Solicitando exportacion a Excel...');
     const [ download ] = await Promise.all([
       page.waitForEvent('download', { timeout: 60000 }),
       page.click('button:has-text("Excel"), button:has-text("Exportar a Excel"), [aria-label*="Excel"]')
@@ -86,19 +81,18 @@ const path = require('path');
     }
 
     const fecha = new Date().toISOString().split('T')[0];
-    const targetFile = path.join(outputDir, );
+    const targetFile = path.join(outputDir, 'Movimiento_auxiliar_' + fecha + '.xlsx');
     
     await download.saveAs(targetFile);
-    console.log();
+    console.log('10. Reporte guardado con exito en:', targetFile);
 
   } catch (error) {
-    console.error('Error durante la ejecución:', error.message || error);
+    console.error('Error durante la ejecucion:', error.message || error);
     try {
       console.log('URL al momento del error:', page.url());
-      console.log('Título al momento del error:', await page.title());
+      console.log('Titulo al momento del error:', await page.title());
       const bodySnippet = await page.locator('body').innerText().catch(() => '');
-      console.log('Contenido visible en pantalla (primeros 800 caracteres):
-', bodySnippet.substring(0, 800));
+      console.log('Contenido visible en pantalla (primeros 800 caracteres):\n', bodySnippet.substring(0, 800));
       await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
     } catch (_) {}
     process.exit(1);
