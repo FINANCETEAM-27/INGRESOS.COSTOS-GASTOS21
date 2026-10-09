@@ -20,36 +20,42 @@ const path = require('path');
 
   try {
     console.log('1. Abriendo página de inicio de sesión de Siigo...');
-    await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'networkidle' });
+    await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'networkidle', timeout: 60000 });
 
-    // Iniciar sesión
-    console.log('2. Ingresando credenciales...');
-    await page.fill('input[type="email"], input[name="username"], #username-input', user);
-    await page.fill('input[type="password"], input[name="password"], #password-input', pass);
+    // Esperar a que cargue la pantalla de login de Siigo (Azure B2C)
+    console.log('2. Ingresando credenciales en Siigo...');
+    await page.waitForSelector('#siigoSignInName, #signInName', { timeout: 30000 });
+
+    const usernameSelector = (await page.isVisible('#siigoSignInName')) ? '#siigoSignInName' : '#signInName';
+    const passwordSelector = (await page.isVisible('#siigoPassword')) ? '#siigoPassword' : '#password';
+    const nextBtnSelector = (await page.isVisible('#siigoNext')) ? '#siigoNext' : '#next';
+
+    await page.fill(usernameSelector, user);
+    await page.fill(passwordSelector, pass);
     
-    // Clic en ingresar
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle' }),
-      page.click('button[type="submit"], #btn-login, button:has-text("Ingresar")')
-    ]);
+    console.log('3. Enviando formulario de acceso...');
+    await page.click(nextBtnSelector);
 
-    console.log('3. Sesión iniciada correctamente.');
+    // Esperar a que Siigo autentique y vuelva al panel principal
+    await page.waitForURL(/siigonube\.siigo\.com/, { timeout: 60000 });
+    await page.waitForLoadState('networkidle');
+    console.log('4. Sesión iniciada correctamente en Siigo Nube.');
+
+    // Tomar captura de confirmación de entrada
+    await page.waitForTimeout(3000);
 
     // Navegar a Reportes > Movimiento auxiliar de tercero por cuenta contable
-    console.log('4. Navegando al reporte de movimiento auxiliar...');
-    // Clic en menú Reportes
+    console.log('5. Navegando al reporte de movimiento auxiliar...');
     await page.click('text=Reportes');
-    await page.waitForTimeout(1500);
-
-    // Seleccionar Financieros / Contables y luego el reporte exacto
-    await page.click('text=Movimiento auxiliar de tercero por cuenta contable');
     await page.waitForTimeout(2000);
 
+    await page.click('text=Movimiento auxiliar de tercero por cuenta contable');
+    await page.waitForTimeout(3000);
+
     // Preparar captura de la descarga
-    console.log('5. Solicitando exportación a Excel...');
+    console.log('6. Solicitando exportación a Excel...');
     const [ download ] = await Promise.all([
       page.waitForEvent('download', { timeout: 60000 }),
-      // Selector del botón de descargar Excel en Siigo
       page.click('button:has-text("Excel"), button:has-text("Exportar a Excel"), [aria-label="Descargar Excel"]')
     ]);
 
@@ -64,11 +70,10 @@ const path = require('path');
     const targetFile = path.join(outputDir, `Movimiento_auxiliar_${fecha}.xlsx`);
     
     await download.saveAs(targetFile);
-    console.log(`6. Reporte guardado con éxito en: ${targetFile}`);
+    console.log(`7. Reporte guardado con éxito en: ${targetFile}`);
 
   } catch (error) {
     console.error('Error durante la ejecución:', error);
-    // Tomar captura de pantalla si falla para diagnosticar
     await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
     process.exit(1);
   } finally {
