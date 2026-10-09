@@ -34,39 +34,98 @@ const path = require('path');
     const nextBtn = page.locator('#siigoNext');
     await nextBtn.click();
 
-    console.log('4. Esperando redireccion de Azure B2C a Siigo Nube...');
+    console.log('4. Esperando redireccion a Siigo Nube...');
     await page.waitForURL(url => !url.href.includes('account.siigo.com'), { timeout: 60000 });
-    console.log('5. Autenticacion exitosa. URL actual:', page.url());
+    console.log('5. Autenticacion exitosa. URL inicial:', page.url());
 
-    console.log('6. Esperando carga del entorno de Siigo...');
-    await page.waitForLoadState('domcontentloaded');
+    console.log('6. Esperando carga del dashboard...');
+    await page.waitForLoadState('networkidle');
     await page.waitForTimeout(6000);
 
-    console.log('URL tras carga:', page.url());
-    console.log('Titulo de la pagina:', await page.title());
+    console.log('URL actual tras carga:', page.url());
+    console.log('Titulo:', await page.title());
 
-    // Si hay un modal o diálogo emergente, intentar cerrarlo
-    const closeButtons = page.locator('button[aria-label="Close"], button:has-text("Cerrar"), button:has-text("Entendido"), .modal-close');
-    if (await closeButtons.count() > 0) {
-      console.log('Cerrando ventana emergente detectada...');
-      await closeButtons.first().click().catch(() => {});
+    // Analisis exhaustivo de la interfaz
+    const domInfo = await page.evaluate(() => {
+      // 1. Frames
+      const frames = Array.from(window.frames).map(f => {
+        try { return f.location.href; } catch(e) { return 'cross-origin'; }
+      });
+
+      // 2. Elementos con texto relacionado con reportes o informes
+      const allElements = Array.from(document.querySelectorAll('*'));
+      const reportMatches = [];
+      const menuCandidates = [];
+
+      for (const el of allElements) {
+        const text = (el.innerText || '').trim();
+        const aria = el.getAttribute('aria-label') || '';
+        const title = el.getAttribute('title') || '';
+        const id = el.id || '';
+        const cls = typeof el.className === 'string' ? el.className : '';
+
+        // Buscar coincidencias de reportes
+        if (/reporte|informe/i.test(text) || /reporte|informe/i.test(aria) || /reporte|informe/i.test(title)) {
+          reportMatches.push({
+            tag: el.tagName.toLowerCase(),
+            text: text.substring(0, 60),
+            id,
+            cls,
+            aria,
+            title
+          });
+        }
+
+        // Detectar elementos interactivos del menu lateral o superior
+        if (['A', 'BUTTON', 'LI', 'MAT-LIST-ITEM', 'SIIGO-MENU-ITEM'].includes(el.tagName) || el.getAttribute('role') === 'button') {
+          if (text && text.length < 35 && !text.includes('\n')) {
+            menuCandidates.push({
+              tag: el.tagName.toLowerCase(),
+              text,
+              id,
+              href: el.getAttribute('href') || ''
+            });
+          }
+        }
+      }
+
+      return {
+        frames,
+        reportMatches: reportMatches.slice(0, 15),
+        menuCandidates: Array.from(new Set(menuCandidates.map(m => `${m.tag}:${m.text}:${m.href}`))).slice(0, 40)
+      };
+    });
+
+    console.log('Frames detectados:', domInfo.frames);
+    console.log('Coincidencias con Reportes/Informes:', JSON.stringify(domInfo.reportMatches, null, 2));
+    console.log('Opciones de menu interactivo detectadas:', JSON.stringify(domInfo.menuCandidates, null, 2));
+
+    // Si encontramos algún elemento que dice "Reportes", hagamos clic en el más específico
+    console.log('7. Buscando y pulsando Reportes...');
+    const reportBtn = page.locator('text=/^Reportes$/i, a:has-text("Reportes"), button:has-text("Reportes"), [title*="Reportes"], [aria-label*="Reportes"]').first();
+    
+    if (await reportBtn.isVisible()) {
+      await reportBtn.click();
+      console.log('Boton de Reportes pulsado exitosamente');
+      await page.waitForTimeout(3000);
+    } else {
+      console.log('Buscando menu lateral o desplegable...');
+      // Intentar abrir el menú lateral si está colapsado (hamburguesa o boton de menu)
+      const menuToggle = page.locator('button[aria-label*="menu" i], .menu-icon, .hamburger, [class*="sidebar-toggle"], [class*="menu-toggle"], [id*="menu"]').first();
+      if (await menuToggle.isVisible()) {
+        console.log('Menu hamburguesa detectado, pulsando para desplegar...');
+        await menuToggle.click();
+        await page.waitForTimeout(1500);
+      }
+      await reportBtn.waitFor({ state: 'visible', timeout: 15000 });
+      await reportBtn.click();
     }
 
-    const navItems = await page.locator('nav a, aside a, .sidebar a, [role="navigation"] a').allInnerTexts().catch(() => []);
-    console.log('Opciones de navegacion encontradas:', navItems.filter(t => t.trim()));
-
-    console.log('7. Buscando menu Reportes...');
-    const reportesLocator = page.locator('text=Reportes, a:has-text("Reportes"), [aria-label*="Reportes"], button:has-text("Reportes")').first();
-    await reportesLocator.waitFor({ state: 'visible', timeout: 30000 });
-    await reportesLocator.click();
-    console.log('Clic en Reportes realizado');
-    await page.waitForTimeout(2500);
-
     console.log('8. Buscando reporte de movimiento auxiliar...');
-    const auxLocator = page.locator('text=Movimiento auxiliar de tercero por cuenta contable').first();
+    const auxLocator = page.locator('text=/movimiento auxiliar de tercero por cuenta contable/i').first();
     await auxLocator.waitFor({ state: 'visible', timeout: 30000 });
     await auxLocator.click();
-    console.log('Reporte seleccionado');
+    console.log('Reporte seleccionado con exito');
     await page.waitForTimeout(3000);
 
     console.log('9. Solicitando exportacion a Excel...');
@@ -91,8 +150,6 @@ const path = require('path');
     try {
       console.log('URL al momento del error:', page.url());
       console.log('Titulo al momento del error:', await page.title());
-      const bodySnippet = await page.locator('body').innerText().catch(() => '');
-      console.log('Contenido visible en pantalla (primeros 800 caracteres):\n', bodySnippet.substring(0, 800));
       await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
     } catch (_) {}
     process.exit(1);
