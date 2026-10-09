@@ -20,7 +20,7 @@ const path = require('path');
 
   try {
     console.log('1. Abriendo pantalla de autenticacion de Siigo...');
-    await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
     console.log('2. Ingresando credenciales...');
     const userInput = page.locator('#siigoSignInName');
@@ -39,20 +39,13 @@ const path = require('path');
     console.log('5. Autenticacion exitosa. URL inicial:', page.url());
 
     console.log('6. Esperando carga del dashboard...');
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(6000);
+    await page.waitForTimeout(7000);
 
     console.log('URL actual tras carga:', page.url());
     console.log('Titulo:', await page.title());
 
     // Analisis exhaustivo de la interfaz
     const domInfo = await page.evaluate(() => {
-      // 1. Frames
-      const frames = Array.from(window.frames).map(f => {
-        try { return f.location.href; } catch(e) { return 'cross-origin'; }
-      });
-
-      // 2. Elementos con texto relacionado con reportes o informes
       const allElements = Array.from(document.querySelectorAll('*'));
       const reportMatches = [];
       const menuCandidates = [];
@@ -64,43 +57,34 @@ const path = require('path');
         const id = el.id || '';
         const cls = typeof el.className === 'string' ? el.className : '';
 
-        // Buscar coincidencias de reportes
         if (/reporte|informe/i.test(text) || /reporte|informe/i.test(aria) || /reporte|informe/i.test(title)) {
           reportMatches.push({
             tag: el.tagName.toLowerCase(),
-            text: text.substring(0, 60),
+            text: text.substring(0, 50),
             id,
-            cls,
+            cls: cls.substring(0, 40),
             aria,
             title
           });
         }
 
-        // Detectar elementos interactivos del menu lateral o superior
-        if (['A', 'BUTTON', 'LI', 'MAT-LIST-ITEM', 'SIIGO-MENU-ITEM'].includes(el.tagName) || el.getAttribute('role') === 'button') {
-          if (text && text.length < 35 && !text.includes('\n')) {
-            menuCandidates.push({
-              tag: el.tagName.toLowerCase(),
-              text,
-              id,
-              href: el.getAttribute('href') || ''
-            });
+        if (['A', 'BUTTON', 'LI'].includes(el.tagName) || el.getAttribute('role') === 'button') {
+          if (text && text.length > 1 && text.length < 35 && !text.includes('\n')) {
+            menuCandidates.push(text);
           }
         }
       }
 
       return {
-        frames,
         reportMatches: reportMatches.slice(0, 15),
-        menuCandidates: Array.from(new Set(menuCandidates.map(m => `${m.tag}:${m.text}:${m.href}`))).slice(0, 40)
+        menuCandidates: Array.from(new Set(menuCandidates)).slice(0, 50)
       };
     });
 
-    console.log('Frames detectados:', domInfo.frames);
     console.log('Coincidencias con Reportes/Informes:', JSON.stringify(domInfo.reportMatches, null, 2));
-    console.log('Opciones de menu interactivo detectadas:', JSON.stringify(domInfo.menuCandidates, null, 2));
+    console.log('Textos interactivos detectados:', domInfo.menuCandidates);
 
-    // Si encontramos algún elemento que dice "Reportes", hagamos clic en el más específico
+    // Si encontramos algún elemento que dice "Reportes", hagamos clic
     console.log('7. Buscando y pulsando Reportes...');
     const reportBtn = page.locator('text=/^Reportes$/i, a:has-text("Reportes"), button:has-text("Reportes"), [title*="Reportes"], [aria-label*="Reportes"]').first();
     
@@ -109,16 +93,17 @@ const path = require('path');
       console.log('Boton de Reportes pulsado exitosamente');
       await page.waitForTimeout(3000);
     } else {
-      console.log('Buscando menu lateral o desplegable...');
-      // Intentar abrir el menú lateral si está colapsado (hamburguesa o boton de menu)
-      const menuToggle = page.locator('button[aria-label*="menu" i], .menu-icon, .hamburger, [class*="sidebar-toggle"], [class*="menu-toggle"], [id*="menu"]').first();
-      if (await menuToggle.isVisible()) {
-        console.log('Menu hamburguesa detectado, pulsando para desplegar...');
-        await menuToggle.click();
-        await page.waitForTimeout(1500);
+      console.log('Reportes no visible de inmediato. Probando selectores alternativos...');
+      // Intentar buscar enlaces por href o iconos
+      const altReport = page.locator('a[href*="report"], [id*="report" i], [class*="report" i]').first();
+      if (await altReport.isVisible()) {
+        await altReport.click();
+        console.log('Pulsado enlace alternativo de reportes');
+        await page.waitForTimeout(3000);
+      } else {
+        // Forzar clic en el texto Reportes
+        await reportBtn.click({ force: true, timeout: 15000 });
       }
-      await reportBtn.waitFor({ state: 'visible', timeout: 15000 });
-      await reportBtn.click();
     }
 
     console.log('8. Buscando reporte de movimiento auxiliar...');
