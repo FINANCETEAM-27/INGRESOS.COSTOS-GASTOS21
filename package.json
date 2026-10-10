@@ -1,12 +1,14 @@
 {
   "name": "siigo-playwright-sync",
   "version": "1.0.0",
-  "description": "Descarga automática de reporte contable de Siigo",
+  "description": "Descarga y procesamiento autom\u00e1tico de reporte contable de Siigo",
   "main": "descargar_reporte.js",
   "scripts": {
-    "start": "node descargar_reporte.js"
+    "start": "node descargar_reporte.js",
+    "dashboard": "node generar_dashboard.js"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "playwright": "^1.49.0"
   }
 }
