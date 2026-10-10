@@ -18,6 +18,27 @@ const path = require('path');
     process.exit(1);
   }
 
+  // Interceptar descargas y respuestas de archivos
+  let downloadedFilePath = null;
+  page.on('download', async (download) => {
+    console.log('Evento de descarga detectado:', download.suggestedFilename());
+    const outputDir = path.join(__dirname, 'reportes');
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    const target = path.join(outputDir, download.suggestedFilename() || 'reporte.xlsx');
+    await download.saveAs(target);
+    downloadedFilePath = target;
+    console.log('Descarga completada y guardada en:', target);
+  });
+
+  page.on('response', async (response) => {
+    const url = response.url();
+    const headers = response.headers();
+    const disposition = headers['content-disposition'] || '';
+    if (disposition.includes('attachment') || url.includes('.xlsx') || url.includes('export') || url.includes('download')) {
+      console.log('Respuesta sospechosa de archivo:', url, 'Disposition:', disposition);
+    }
+  });
+
   try {
     console.log('1. Abriendo pantalla de autenticacion de Siigo...');
     await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -41,70 +62,74 @@ const path = require('path');
     console.log('6. Esperando carga del entorno inicial...');
     await page.waitForTimeout(6000);
 
-    // Navegación directa o mediante buscador al reporte exacto
     console.log('7. Navegando al reporte: Movimiento auxiliar de tercero por cuenta contable en Excel...');
     await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(6000);
     console.log('URL actual del reporte:', page.url());
 
-    // Analizar formulario y botones en la pantalla del reporte
-    const controls = await page.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input, select, textarea')).map(i => ({
-        tag: i.tagName.toLowerCase(),
-        type: i.type,
-        name: i.name,
-        id: i.id,
-        placeholder: i.placeholder,
-        value: i.value
-      }));
-      const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]')).map(b => ({
-        tag: b.tagName.toLowerCase(),
-        text: (b.innerText || '').trim(),
-        aria: b.getAttribute('aria-label') || '',
-        title: b.getAttribute('title') || ''
-      })).filter(b => b.text || b.aria || b.title);
-      return { inputs, buttons };
+    // Click en Generar reporte
+    console.log('8. Buscando boton Generar reporte...');
+    const genButton = page.locator('button:has-text("Generar reporte")').first();
+    await genButton.waitFor({ state: 'visible', timeout: 20000 });
+    console.log('Pulsando boton Generar reporte...');
+    await genButton.click();
+    await page.waitForTimeout(3000);
+
+    // Ver si se desplegaron opciones (Excel / TXT o modal)
+    const optionsAfterClick = await page.evaluate(() => {
+      const elements = Array.from(document.querySelectorAll('button, a, li, span, div[role="menuitem"], div[role="option"]'));
+      return elements
+        .map(el => ({ tag: el.tagName.toLowerCase(), text: (el.innerText || '').trim() }))
+        .filter(el => /excel|txt|descargar|generar/i.test(el.text));
     });
+    console.log('Opciones detectadas tras pulsar Generar reporte:', JSON.stringify(optionsAfterClick, null, 2));
 
-    console.log('Campos detectados en el formulario:', JSON.stringify(controls.inputs, null, 2));
-    console.log('Botones detectados:', JSON.stringify(controls.buttons, null, 2));
-
-    // Buscar boton de Generar reporte o Descargar
-    console.log('8. Solicitando generacion y descarga de Excel...');
-    const generateBtn = page.locator('button, a, [role="button"]').filter({ hasText: /generar reporte|descargar|buscar|exportar/i }).first();
-    await generateBtn.waitFor({ state: 'visible', timeout: 20000 });
-    
-    // Preparar escucha de descarga
-    const [ download ] = await Promise.all([
-      page.waitForEvent('download', { timeout: 90000 }),
-      (async () => {
-        await generateBtn.click();
-        await page.waitForTimeout(2000);
-        // Si aparece un submenu o modal para elegir Excel vs TXT
-        const excelChoice = page.locator('button, a, li, span').filter({ hasText: /^Excel$/i, hasNotText: /txt/i });
-        if (await excelChoice.count() > 0 && await excelChoice.first().isVisible()) {
-          console.log('Seleccionando opcion Excel en modal...');
-          await excelChoice.first().click();
-        }
-      })()
-    ]);
-
-    const outputDir = path.join(__dirname, 'reportes');
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
+    // Si hay opcion Excel, hacerle click
+    const excelOption = page.locator('button, a, li, span, div[role="menuitem"]').filter({ hasText: /^Excel$/i }).first();
+    if (await excelOption.count() > 0 && await excelOption.isVisible()) {
+      console.log('Pulsando opcion Excel...');
+      await excelOption.click();
+      await page.waitForTimeout(3000);
+    } else {
+      // Probar si el enlace <a> era el dropdown o submenu
+      const linkExcel = page.locator('a:has-text("Excel"), button:has-text("Excel")').first();
+      if (await linkExcel.count() > 0 && await linkExcel.isVisible()) {
+        console.log('Pulsando enlace/boton Excel...');
+        await linkExcel.click();
+        await page.waitForTimeout(3000);
+      }
     }
 
-    const fecha = new Date().toISOString().split('T')[0];
-    const targetFile = path.join(outputDir, 'Movimiento_auxiliar_' + fecha + '.xlsx');
-    
-    await download.saveAs(targetFile);
-    console.log('9. Reporte guardado con exito en:', targetFile);
+    // Esperar hasta 60s si se detecta descarga o cambio en pantalla
+    console.log('9. Esperando generacion/descarga del archivo...');
+    for (let i = 0; i < 30; i++) {
+      if (downloadedFilePath && fs.existsSync(downloadedFilePath)) {
+        console.log('¡Archivo descargado exitosamente!', downloadedFilePath);
+        break;
+      }
+      await page.waitForTimeout(2000);
+    }
+
+    // Comprobar si se creo el archivo en la carpeta reportes
+    const outputDir = path.join(__dirname, 'reportes');
+    if (fs.existsSync(outputDir)) {
+      const files = fs.readdirSync(outputDir);
+      console.log('Archivos en carpeta reportes:', files);
+      if (files.some(f => f.endsWith('.xlsx') || f.endsWith('.zip') || f.endsWith('.csv'))) {
+        console.log('10. Reporte generado y verificado.');
+        process.exit(0);
+      }
+    }
+
+    // Si no descargo, tomar captura y volcar alertas/toasts
+    console.log('Texto visible en la pagina tras la solicitud:');
+    const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 1500));
+    console.log(bodyText);
+    await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
 
   } catch (error) {
     console.error('Error durante la ejecucion:', error.message || error);
     try {
-      console.log('URL al momento del error:', page.url());
-      console.log('Titulo al momento del error:', await page.title());
       await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
     } catch (_) {}
     process.exit(1);
