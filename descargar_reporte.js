@@ -117,6 +117,22 @@ const path = require('path');
       console.log('Archivos en carpeta reportes:', files);
       if (files.some(f => f.endsWith('.xlsx') || f.endsWith('.zip') || f.endsWith('.csv'))) {
         console.log('10. Reporte generado y verificado.');
+        await browser.close();
+
+        // 11. Procesar Excel y actualizar aplicativo interactivo (index.html)
+        console.log('11. Procesando Excel y actualizando index.html...');
+        try {
+          const { execSync } = require('child_process');
+          execSync('node generar_dashboard.js', { stdio: 'inherit' });
+          console.log('Dashboard index.html actualizado con exito.');
+          // Añadir index.html al staging de Git para que el workflow lo suba
+          try {
+            execSync('git add index.html', { stdio: 'inherit' });
+          } catch (_) {}
+        } catch (genErr) {
+          console.error('Advertencia al generar dashboard:', genErr.message || genErr);
+        }
+
         process.exit(0);
       }
     }
