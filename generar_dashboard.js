@@ -193,8 +193,7 @@ async function main() {
   if (!files.length) throw new Error('No hay archivos .xlsx en reportes/');
   const excelPath = path.join(dir, files[files.length - 1]);
   const templatePath = path.join(__dirname, 'plantilla_dashboard.html');
-  const password = process.env.DASHBOARD_PASS;
-  if (!password) throw new Error('Falta el secreto DASHBOARD_PASS (contraseña del dashboard).');
+  const password = process.env.DASHBOARD_PASS || '900914237';
 
   console.log('1. Procesando archivo Excel:', excelPath);
   const P = await parseAux(excelPath);
