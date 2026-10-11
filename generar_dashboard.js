@@ -1,56 +1,58 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const ExcelJS = require('exceljs');
+const XLSX = require('xlsx');
 
 const __norm = s => String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-function __cv(v){
-  if(v && typeof v === 'object' && !(v instanceof Date)){
-    if('result' in v) v = v.result;
-    else if(v.richText) v = v.richText.map(t=>t.text).join('');
-    else if(v.text !== undefined) v = v.text;
-  }
-  return v == null ? '' : v;
-}
-function __date(v){
-  if(v instanceof Date && !isNaN(v)) return [v.getUTCFullYear(), v.getUTCMonth()+1, v.getUTCDate()];
-  if(typeof v === 'number' && v > 30000){
-    const d = new Date(Math.round((v - 25569) * 864e5));
-    return [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()];
-  }
-  if(typeof v === 'string'){
-    let m = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-    if(m) return [+m[3], +m[2], +m[1]];
-    m = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if(m) return [+m[1], +m[2], +m[3]];
-  }
-  return null;
-}
 const __num = v => {
-  if(typeof v === 'number') return v;
-  if(typeof v === 'string' && v.trim()){
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && v.trim()) {
     const n = Number(v.replace(/[^\d.\-]/g, ''));
     return isNaN(n) ? 0 : n;
   }
   return 0;
 };
-
-async function parseAux(filePath) {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  let ws = null, H = null, hrow = 0;
-  for (const w of wb.worksheets) {
-    let found = null;
-    w.eachRow({ includeEmpty: false }, (row, n) => {
-      if (found || n > 40) return;
-      const vals = Array.from(row.values, x => __norm(__cv(x)));
-      if (vals.includes('codigo contable') && vals.some(x => x.startsWith('fecha'))) {
-        found = { n, vals };
-      }
-    });
-    if (found) { ws = w; H = found.vals; hrow = found.n; break; }
+function __date(v) {
+  if (v instanceof Date && !isNaN(v)) return [v.getUTCFullYear(), v.getUTCMonth()+1, v.getUTCDate()];
+  if (typeof v === 'number' && v > 30000) {
+    const d = new Date(Math.round((v - 25569) * 864e5));
+    return [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()];
   }
-  if (!ws) throw new Error('No se reconoce el formato del reporte.');
+  if (typeof v === 'string') {
+    let m = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (m) return [+m[3], +m[2], +m[1]];
+    m = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return [+m[1], +m[2], +m[3]];
+  }
+  return null;
+}
+
+function parseAux(filePath) {
+  const wb = XLSX.readFile(filePath);
+  const sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+
+  // Recalcular rango en caso de que !ref venga incompleto
+  let maxCol = 0, maxRow = 0;
+  for (const key of Object.keys(ws)) {
+    if (key[0] === '!') continue;
+    const cell = XLSX.utils.decode_cell(key);
+    if (cell.c > maxCol) maxCol = cell.c;
+    if (cell.r > maxRow) maxRow = cell.r;
+  }
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxRow, c: maxCol } });
+
+  const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  let H = null, hrow = 0;
+  for (let i = 0; i < Math.min(rawRows.length, 40); i++) {
+    const vals = rawRows[i].map(__norm);
+    if (vals.includes('codigo contable') && vals.some(x => x.startsWith('fecha'))) {
+      H = vals;
+      hrow = i;
+      break;
+    }
+  }
+  if (!H) throw new Error('No se encontro la fila de encabezados en el reporte.');
 
   const ix = f => H.findIndex(f);
   const C = {
@@ -58,172 +60,198 @@ async function parseAux(filePath) {
     nom: ix(x => x === 'nombre tercero' || x.startsWith('nombre del tercero')),
     cod: ix(x => x === 'codigo contable'),
     cta: ix(x => x === 'cuenta contable'),
-    comp: ix(x => x === 'comprobante'),
+    comp: ix(x => x.startsWith('comprobante')),
     fec: ix(x => x.startsWith('fecha')),
-    deb: ix(x => x === 'debito'),
-    cre: ix(x => x === 'credito')
+    deb: ix(x => x.startsWith('debito')),
+    cre: ix(x => x.startsWith('credito')),
+    sal: ix(x => x.startsWith('saldo movimiento') || x.startsWith('saldo mov'))
   };
 
-  for (const k of ['cod', 'fec', 'deb', 'cre']) {
-    if (C[k] < 1) throw new Error('Falta la columna: ' + k);
+  const rows = [];
+  let curTer = null, curCta = null;
+  let totalDeb = 0, totalCre = 0;
+
+  for (let i = hrow + 1; i < rawRows.length; i++) {
+    const r = rawRows[i];
+    const c0 = String(r[0] || '').trim();
+    if (!c0 && !r[C.cod] && !r[C.comp]) continue;
+
+    if (c0.startsWith('Nombre del tercero:')) {
+      const txt = c0.replace(/^Nombre del tercero:\s*/i, '').trim();
+      const m = txt.match(/^(\d+)\s+(.*)$/);
+      curTer = m ? { id: m[1], nom: m[2].trim() } : { id: '', nom: txt };
+      continue;
+    }
+    if (c0.startsWith('Cuenta contable:')) {
+      const txt = c0.replace(/^Cuenta contable:\s*/i, '').trim();
+      const m = txt.match(/^(\d+)\s+(.*)$/);
+      curCta = m ? { cod: m[1], nom: m[2].trim() } : { cod: '', nom: txt };
+      continue;
+    }
+    if (c0.startsWith('Total')) continue;
+
+    const cod = String(r[C.cod] || curCta?.cod || '').trim();
+    const cls = cod.charAt(0);
+    if (!['4', '5', '6'].includes(cls)) continue;
+
+    const comp = String(r[C.comp] || '').trim();
+    if (!comp) continue;
+
+    const dt = __date(r[C.fec]);
+    if (!dt) continue;
+
+    const deb = __num(r[C.deb]);
+    const cre = __num(r[C.cre]);
+    totalDeb += deb;
+    totalCre += cre;
+
+    const terId = String(r[C.id] || curTer?.id || '').trim();
+    const terNom = String(r[C.nom] || curTer?.nom || '').trim();
+    const ctaNom = String(r[C.cta] || curCta?.nom || '').trim();
+
+    rows.push({
+      terId, terNom, cod, ctaNom, comp,
+      year: dt[0], month: dt[1], day: dt[2],
+      fecStr: `${dt[0]}-${String(dt[1]).padStart(2,'0')}-${String(dt[2]).padStart(2,'0')}`,
+      deb, cre, net: cls === '4' ? (cre - deb) : (deb - cre)
+    });
   }
 
-  const recs = [];
-  let grp = null, gl = [], hd = 0, hc = 0, bad = 0;
-  ws.eachRow({ includeEmpty: false }, (row, n) => {
-    if (n <= hrow) return;
-    const v = row.values;
-    const a = __cv(v[1]);
-    if (typeof a === 'string' && a.startsWith('Cuenta contable:')) {
-      grp = { d: __num(__cv(v[C.deb])), c: __num(__cv(v[C.cre])), d0: 0, c0: 0 };
-      gl.push(grp); hd += grp.d; hc += grp.c;
-      return;
-    }
-    if (typeof a === 'string' && a.startsWith('Nombre del tercero:')) return;
-    const cod = String(__cv(v[C.cod])).trim();
-    const dt = __date(__cv(v[C.fec]));
-    if (!cod || !dt) {
-      if (a !== '' && !String(a).startsWith('Procesado')) bad++;
-      return;
-    }
-    const d = __num(__cv(v[C.deb])), c = __num(__cv(v[C.cre]));
-    if (grp) { grp.d0 += d; grp.c0 += c; }
-    recs.push({
-      id: String(__cv(v[C.id])).trim(),
-      nom: String(__cv(v[C.nom])).trim(),
-      cod,
-      cta: String(__cv(v[C.cta])).trim(),
-      comp: String(__cv(v[C.comp])).trim(),
-      y: dt[0], m: dt[1], d: dt[2],
-      deb: d, cre: c
-    });
-  });
-
-  if (!recs.length) throw new Error('No se encontraron movimientos en el archivo.');
-
-  const yc = {};
-  recs.forEach(r => yc[r.y] = (yc[r.y] || 0) + 1);
-  const year = +Object.keys(yc).sort((a,b) => yc[b] - yc[a])[0];
-  const all = recs.filter(r => r.y === year);
-  let fd = 0, fc = 0;
-  all.forEach(r => { fd += r.deb; fc += r.cre; });
-  const R = all.filter(r => r.m <= 12);
-  let sd = 0, sc = 0;
-  R.forEach(r => { sd += r.deb; sc += r.cre; });
-  const mism = gl.filter(g => Math.abs(g.d - g.d0) > 1 || Math.abs(g.c - g.c0) > 1).length;
-  let last = 0;
-  R.forEach(r => { const k = r.m * 100 + r.d; if (k > last) last = k; });
-  const cuadra = gl.length > 0 && mism === 0 && Math.abs(fd - hd) < 1 && Math.abs(fc - hc) < 1;
-
-  return { recs: R, year, skipped: recs.length - R.length, after: all.length - R.length, bad, hdrGroups: gl.length, mism, sd, sc, hd, hc, cuadra, last };
+  return { rows, totalDeb, totalCre };
 }
 
-function buildCube(P, catObj) {
-  const cuMap = new Map(), terMap = new Map(), cmpMap = new Map();
-  P.recs.forEach(r => {
-    if (!cuMap.has(r.cod)) cuMap.set(r.cod, r.cta || r.cod);
-    const tk = r.id + '|' + r.nom;
-    if (!terMap.has(tk)) terMap.set(tk, 0);
-  });
-  const cods = [...cuMap.keys()].sort();
-  const ci = new Map(cods.map((c, i) => [c, i]));
-  const ters = [...terMap.keys()];
-  ters.forEach((t, i) => terMap.set(t, i));
-  const cuentas = cods.map(c => [c, cuMap.get(c)]);
-  const comps = [], rows = [];
-  const seen = new Map();
-  let dupN = 0, dupSum = 0, zero = 0;
+function buildCube(rows) {
+  const cuentas = {}, ters = {}, cat = { '4': {}, '5': {}, '6': {} };
+  const comps = {}, ccs = {};
+  const monthSums = { '4': Array(12).fill(0), '5': Array(12).fill(0), '6': Array(12).fill(0) };
+  let minYear = 2026, maxYear = 2026;
 
-  P.recs.forEach(r => {
-    let k = cmpMap.get(r.comp);
-    if (k === undefined) { k = comps.length; comps.push(r.comp); cmpMap.set(r.comp, k); }
-    const v = Math.round((r.deb - r.cre) * 100) / 100;
-    const c = ci.get(r.cod), t = terMap.get(r.id + '|' + r.nom), d = r.m * 100 + r.d;
-    const key = k + '|' + c + '|' + t + '|' + d + '|' + v;
-    const dup = seen.has(key) ? 1 : 0;
-    seen.set(key, 1);
-    if (dup) { dupN++; dupSum += v; }
-    if (v === 0) zero++;
-    rows.push([d, c, 0, t, k, 0, v, dup]);
-  });
-  rows.sort((a, b) => a[0] - b[0]);
+  for (const r of rows) {
+    const cls = r.cod.charAt(0);
+    if (r.year) {
+      if (r.year < minYear) minYear = r.year;
+      if (r.year > maxYear) maxYear = r.year;
+    }
+    if (r.month >= 1 && r.month <= 12) {
+      monthSums[cls][r.month - 1] += r.net;
+    }
+
+    if (!cuentas[r.cod]) cuentas[r.cod] = { n: r.ctaNom, c: cls, d: 0, c_: 0, net: 0, t: {} };
+    cuentas[r.cod].d += r.deb;
+    cuentas[r.cod].c_ += r.cre;
+    cuentas[r.cod].net += r.net;
+
+    if (!ters[r.terId]) ters[r.terId] = { n: r.terNom, d: 0, c_: 0, net: 0, ctas: {} };
+    ters[r.terId].d += r.deb;
+    ters[r.terId].c_ += r.cre;
+    ters[r.terId].net += r.net;
+    ters[r.terId].ctas[r.cod] = (ters[r.terId].ctas[r.cod] || 0) + r.net;
+  }
+
+  const compactRows = rows.map(r => [
+    r.terId,
+    r.cod,
+    r.comp,
+    r.month * 100 + r.day,
+    Math.round(r.deb * 100) / 100,
+    Math.round(r.cre * 100) / 100
+  ]);
 
   return {
+    year: maxYear,
     cuentas,
-    cat: catObj || {},
-    ccs: [''],
     ters,
+    cat,
     comps,
-    dets: [''],
-    rows,
-    year: P.year,
+    ccs,
+    dets: {},
+    rows: compactRows,
     audit: {
-      custom: 1,
-      filas: rows.length,
-      terceros: ters.length,
-      cuentas: cuentas.length,
-      dup_n: dupN,
-      dup_sum: dupSum,
-      ceros: zero,
-      cuadra: P.cuadra,
-      mism: P.mism,
-      hdr: P.hdrGroups,
-      last: P.last,
-      sd: P.sd,
-      sc: P.sc,
-      bad: P.bad
+      generatedAt: new Date().toISOString(),
+      totalMovements: rows.length,
+      monthSums
     }
   };
 }
 
-function encryptHtml(html, password) {
+function encryptPayload(htmlContent, password) {
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
   const key = crypto.pbkdf2Sync(password, salt, 250000, 32, 'sha256');
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ct = Buffer.concat([cipher.update(Buffer.from(html, 'utf8')), cipher.final()]);
+  const enc = Buffer.concat([cipher.update(Buffer.from(htmlContent, 'utf-8')), cipher.final()]);
   const tag = cipher.getAuthTag();
-  const raw = Buffer.concat([salt, iv, ct, tag]);
-  return raw.toString('base64');
+  const packed = Buffer.concat([salt, iv, enc, tag]);
+  return packed.toString('base64');
 }
 
 async function main() {
   const dir = path.join(__dirname, 'reportes');
   const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.toLowerCase().endsWith('.xlsx')).sort() : [];
   if (!files.length) throw new Error('No hay archivos .xlsx en reportes/');
-  const excelPath = path.join(dir, files[files.length - 1]);
+
+  const latestFileName = files[files.length - 1];
+  const latestPath = path.join(dir, latestFileName);
+  console.log(`1. Procesando archivo Excel mas reciente: ${latestFileName}`);
+
+  const { rows, totalDeb, totalCre } = parseAux(latestPath);
+  console.log(`Reporte procesado exitosamente: ${rows.length} movimientos de ingresos, costos y gastos.`);
+  console.log(`Debitos totales: $${totalDeb.toLocaleString('es-CO')}`);
+  console.log(`Creditos totales: $${totalCre.toLocaleString('es-CO')}`);
+
+  // Si hay archivo previo, comparar para reportar movimientos nuevos
+  if (files.length > 1) {
+    const prevFileName = files[files.length - 2];
+    const prevPath = path.join(dir, prevFileName);
+    console.log(`\n2. Comparando con reporte anterior: ${prevFileName}...`);
+    try {
+      const prevData = parseAux(prevPath);
+      const prevKeys = new Set(prevData.rows.map(r => `${r.terId}|${r.cod}|${r.comp}|${r.fecStr}|${r.deb}|${r.cre}`));
+      const newMovements = rows.filter(r => !prevKeys.has(`${r.terId}|${r.cod}|${r.comp}|${r.fecStr}|${r.deb}|${r.cre}`));
+
+      console.log(`=== REPORTE DE MOVIMIENTOS NUEVOS ===`);
+      console.log(`Total movimientos archivo anterior: ${prevData.rows.length}`);
+      console.log(`Total movimientos archivo nuevo:    ${rows.length}`);
+      console.log(`Movimientos nuevos detectados:       ${newMovements.length}`);
+
+      if (newMovements.length > 0) {
+        console.log(`\n--- MUESTRA DE MOVIMIENTOS NUEVOS INCORPORADOS HOY ---`);
+        for (let i = 0; i < Math.min(newMovements.length, 5); i++) {
+          const m = newMovements[i];
+          console.log(`[${i+1}] Fecha: ${m.fecStr} | Comp: ${m.comp} | Tercero: ${m.terId} - ${m.terNom} | Cuenta: ${m.cod} - ${m.ctaNom} | Déb: $${m.deb} | Créd: $${m.cre}`);
+        }
+      } else {
+        console.log('No se registraron transacciones nuevas entre estos dos cortes.');
+      }
+    } catch (cmpErr) {
+      console.log('No se pudo completar la comparacion anterior:', cmpErr.message);
+    }
+  }
+
+  console.log('\n3. Construyendo cubo de datos interactivo...');
+  const cube = buildCube(rows);
+
   const templatePath = path.join(__dirname, 'plantilla_dashboard.html');
+  if (!fs.existsSync(templatePath)) throw new Error('No se encontro plantilla_dashboard.html');
+  const template = fs.readFileSync(templatePath, 'utf-8');
+
+  const unencrypted = template.replace('/*__EMB_DATA_PLACEHOLDER__*/', JSON.stringify(cube));
   const password = process.env.DASHBOARD_PASS || '900914237';
+  console.log('4. Cifrando aplicativo para publicacion protegida...');
+  const b64 = encryptPayload(unencrypted, password);
 
-  console.log('1. Procesando archivo Excel:', excelPath);
-  const P = await parseAux(excelPath);
-  console.log(`- Movimientos procesados: ${P.recs.length} (Año ${P.year})`);
-
-  console.log('2. Construyendo cubo analítico...');
-  const templateHtml = fs.readFileSync(templatePath, 'utf8');
-  const catMatch = templateHtml.match(/\"cat\":\s*(\{[^\}]+\})/);
-  const catObj = catMatch ? JSON.parse(catMatch[1]) : {};
-  const cube = buildCube(P, catObj);
-  cube.fileName = path.basename(excelPath);
-
-  console.log('3. Inyectando datos en la plantilla...');
-  const embCode = '__EMB=' + JSON.stringify(cube) + ';';
-  const fullHtml = templateHtml.replace('/*__EMB_DATA_PLACEHOLDER__*/', embCode);
-
-  console.log('4. Cifrando con AES-256-GCM...');
-  const b64 = encryptHtml(fullHtml, password);
-
-  console.log('5. Generando index.html...');
-  const outerHtml = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-  const b64Start = outerHtml.indexOf('const B64="');
-  const b64End = outerHtml.indexOf('";', b64Start);
-  if (b64Start < 0) throw new Error('index.html no tiene el formato esperado');
-  const newIndexHtml = outerHtml.substring(0, b64Start + 11) + b64 + outerHtml.substring(b64End);
-  fs.writeFileSync(path.join(__dirname, 'index.html'), newIndexHtml, 'utf8');
-  console.log('index.html actualizado con', P.recs.length, 'movimientos. Cuadra con subtotales:', P.cuadra);
+  const indexPath = path.join(__dirname, 'index.html');
+  let currentHtml = fs.readFileSync(indexPath, 'utf-8');
+  currentHtml = currentHtml.replace(/const encryptedData = "([^"]*)";/, `const encryptedData = "${b64}";`);
+  fs.writeFileSync(indexPath, currentHtml, 'utf-8');
+  console.log('5. index.html actualizado y guardado correctamente.');
 }
 
-main().catch(err => {
-  console.error('Error:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('Error:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { parseAux, buildCube, encryptPayload };
