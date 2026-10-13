@@ -44,9 +44,9 @@ function parseAux(filePath) {
 
   const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
   let H = null, hrow = 0;
-  for (let i = 0; i < Math.min(rawRows.length, 40); i++) {
+    for (let i = 0; i < Math.min(rawRows.length, 40); i++) {
     const vals = rawRows[i].map(__norm);
-    if (vals.includes('codigo contable') && vals.some(x => x.startsWith('fecha'))) {
+    if (vals.some(x => x.includes('codigo') && x.includes('contable')) && vals.some(x => x.startsWith('fecha'))) {
       H = vals;
       hrow = i;
       break;
@@ -58,7 +58,7 @@ function parseAux(filePath) {
   const C = {
     id: ix(x => x.startsWith('identificacion')),
     nom: ix(x => x === 'nombre tercero' || x.startsWith('nombre del tercero')),
-    cod: ix(x => x === 'codigo contable'),
+    cod: ix(x => x.includes('codigo') && x.includes('contable')),
     cta: ix(x => x === 'cuenta contable'),
     comp: ix(x => x.startsWith('comprobante')),
     fec: ix(x => x.startsWith('fecha')),
@@ -66,6 +66,7 @@ function parseAux(filePath) {
     cre: ix(x => x.startsWith('credito')),
     sal: ix(x => x.startsWith('saldo movimiento') || x.startsWith('saldo mov'))
   };
+
 
   const rows = [];
   let curTer = null, curCta = null;
@@ -242,7 +243,11 @@ async function main() {
 
   const indexPath = path.join(__dirname, 'index.html');
   let currentHtml = fs.readFileSync(indexPath, 'utf-8');
-  currentHtml = currentHtml.replace(/const encryptedData = "([^"]*)";/, `const encryptedData = "${b64}";`);
+  if (/const B64\s*=\s*"[^"]*";/.test(currentHtml)) {
+  currentHtml = currentHtml.replace(/const B64\s*=\s*"[^"]*";/, `const B64="${b64}";`);
+} else {
+  currentHtml = currentHtml.replace(/const encryptedData\s*=\s*"[^"]*";/, `const encryptedData = "${b64}";`);
+}
   fs.writeFileSync(indexPath, currentHtml, 'utf-8');
   console.log('5. index.html actualizado y guardado correctamente.');
 }
