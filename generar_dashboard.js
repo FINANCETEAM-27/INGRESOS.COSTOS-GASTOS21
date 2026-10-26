@@ -177,23 +177,31 @@ function buildCube(P, catObj) {
     rows,
     year: P.year,
     audit: {
-      custom: 1,
-      filas: rows.length,
-      terceros: ters.length,
-      cuentas: cuentas.length,
-      dup_n: dupN,
-      dup_sum: dupSum,
-      ceros: zero,
-      cuadra: true,
-      mism: 0,
-      hdr: 0,
-      last: P.last,
-      sd: P.sd,
-      sc: P.sc,
-      bad: P.bad
-    }
-  };
+      // Obtener fecha actual en zona horaria Colombia (UTC-5)
+const now = new Date();
+const fechaActualizacion = now.toLocaleString('es-CO', { 
+  timeZone: 'America/Bogota',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: true 
+});
+
+// Calcular el último mes vencido cerrado (mes anterior)
+const mesesNombres = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const mesVencidoIndex = (now.getMonth() === 0 ? 11 : now.getMonth() - 1);
+const anioVencido = (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());
+const corteMesVencido = `${mesesNombres[mesVencidoIndex]} ${anioVencido}`;
+
+// En el return de buildCube, dentro de audit:
+audit: {
+  custom: 1,
+  filas: rows.length,
+  terceros: ters.length,
+  cuentas: cuentas.length,
+  updatedAt: fechaActualizacion,
+  corteMesVencido: corteMesVencido,
+  // ... resto de campos existentes
 }
+
 
 function encryptHtml(html, password) {
   const salt = crypto.randomBytes(16);
