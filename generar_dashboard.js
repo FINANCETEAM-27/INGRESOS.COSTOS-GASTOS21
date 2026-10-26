@@ -26,6 +26,28 @@ function __date(v) {
   }
   return null;
 }
+// Nombres de grupos (4 dígitos) según PUC para que el tablero no muestre solo el código
+const PUC_G4 = {
+  '4135': 'Comercio al por mayor y al por menor', '4145': 'Transporte, almacenamiento y comunicaciones',
+  '4175': 'Devoluciones en ventas (DB)', '4180': 'Ingresos por servicios', '4210': 'Financieros',
+  '4220': 'Arrendamientos', '4245': 'Utilidad en venta de propiedades, planta y equipo',
+  '4250': 'Recuperaciones', '4255': 'Indemnizaciones', '4265': 'Ingresos de ejercicios anteriores',
+  '4295': 'Diversos', '4296': 'Otros ingresos POS',
+  '5105': 'Gastos de personal (admón.)', '5110': 'Honorarios (admón.)', '5115': 'Impuestos (admón.)',
+  '5120': 'Arrendamientos (admón.)', '5125': 'Contribuciones y afiliaciones (admón.)', '5130': 'Seguros (admón.)',
+  '5135': 'Servicios (admón.)', '5140': 'Gastos legales (admón.)', '5145': 'Mantenimiento y reparaciones (admón.)',
+  '5150': 'Adecuación e instalación (admón.)', '5155': 'Gastos de viaje (admón.)', '5160': 'Depreciaciones (admón.)',
+  '5165': 'Amortizaciones (admón.)', '5195': 'Diversos (admón.)', '5199': 'Provisiones (admón.)',
+  '5205': 'Gastos de personal (ventas)', '5210': 'Honorarios (ventas)', '5215': 'Impuestos (ventas)',
+  '5220': 'Arrendamientos (ventas)', '5225': 'Contribuciones y afiliaciones (ventas)', '5230': 'Seguros (ventas)',
+  '5235': 'Servicios (ventas)', '5240': 'Gastos legales (ventas)', '5245': 'Mantenimiento y reparaciones (ventas)',
+  '5250': 'Adecuación e instalación (ventas)', '5255': 'Gastos de viaje (ventas)', '5260': 'Depreciaciones (ventas)',
+  '5265': 'Amortizaciones (ventas)', '5295': 'Diversos (ventas)', '5299': 'Provisiones (ventas)',
+  '5305': 'Gastos financieros', '5310': 'Pérdida en venta y retiro de bienes', '5315': 'Gastos extraordinarios',
+  '5395': 'Gastos diversos', '6115': 'Costo de ventas – impuestos asumidos',
+  '6135': 'Comercio al por mayor y al por menor', '6145': 'Transporte, almacenamiento y comunicaciones'
+};
+
 function getPreviousMonthEnd(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Bogota',
@@ -227,7 +249,7 @@ async function main() {
   console.log('2. Construyendo cubo analítico...');
   const templateHtml = fs.readFileSync(templatePath, 'utf8');
   const catMatch = templateHtml.match(/\"cat\":\s*(\{[^\}]+\})/);
-  const catObj = catMatch ? JSON.parse(catMatch[1]) : {};
+  const catObj = Object.assign({}, PUC_G4, catMatch ? JSON.parse(catMatch[1]) : {});
   const cube = buildCube(P, catObj);
   cube.fileName = path.basename(excelPath);
 

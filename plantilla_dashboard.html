@@ -133,7 +133,12 @@ tr.acc td:first-child{padding-left:42px}
       </span>
     </div>
   </div>
-
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div class="seg" id="unitSeg"><button data-u="M" class="on">Millones</button><button data-u="P">Pesos</button></div>
+    <button id="upBtn" title="Cargar el Excel Movimiento auxiliar de tercero por cuenta contable">⬆ Cargar Excel</button><button id="upReset" style="display:none" title="Volver a 0 (sin datos)">↺ Vaciar</button><input type="file" id="upFile" accept=".xlsx" hidden>
+    <button id="themeBtn">Modo oscuro</button>
+  </div>
+</div>
 
 <div class="card filters">
   <div class="f"><label>Desde</label><select id="m1"></select></div>
@@ -495,16 +500,16 @@ function initFilters(){
   let t;$('ter').oninput=()=>{clearTimeout(t);t=setTimeout(()=>{S.ter=$('ter').value.trim();computeTerMatch();S.page=0;render()},200)};
   $('reset').onclick=()=>{Object.assign(S,{m1:months[0],m2:months[months.length-1],cls:'',cta:-1,reg:'',cc:-1,cmp:'',ter:'',dup:false,page:0});terMatch=null;
     $('m1').value=S.m1;$('m2').value=S.m2;$('cls').value='';$('cta').value=-1;$('cmp').value='';$('ter').value='';$('dupOnly').checked=false;render()};
-  const seg=(id,key,attr,pg)=>{$(id).onclick=e=>{const b=e.target.closest('button');if(!b)return;S[key]=b.dataset[attr];if(pg)S.page=0;[...$(id).children].forEach(x=>x.classList.toggle('on',x===b));render()}};
-  seg('unitSeg','unit','u');seg('modeSeg','mode','m');seg('pctSeg','pct','p');seg('terTabs','tab','t');seg('sortSeg','sort','s',1);
+  const seg=(id,key,attr,pg)=>{if(!$(id))return;$(id).onclick=e=>{const b=e.target.closest('button');if(!b)return;S[key]=b.dataset[attr];if(pg)S.page=0;[...$(id).children].forEach(x=>x.classList.toggle('on',x===b));render()}};
+  seg('unitSeg','unit','u');seg('modeSeg','mode','m');seg('pctSeg','pct','p');seg('terTabs','tab','t');
   $('acctSearch').oninput=()=>{S.acct=$('acctSearch').value.trim().toLowerCase();renderPivot(CUR)};
   let t2;$('movQ').oninput=()=>{clearTimeout(t2);t2=setTimeout(()=>{S.q=$('movQ').value.trim().toLowerCase();S.page=0;renderMovs(CUR)},200)};
   $('pPrev').onclick=()=>{S.page=Math.max(0,S.page-1);renderMovs(CUR)};
   $('pNext').onclick=()=>{S.page++;renderMovs(CUR)};
   $('expAll').onclick=()=>{cuentas.forEach(c=>{S.open[c.cls]=1;S.open[c.g4]=1});renderPivot(CUR)};
   $('colAll').onclick=()=>{S.open={};renderPivot(CUR)};
-  $('themeBtn').onclick=()=>{const d=document.documentElement;const dk=d.dataset.theme==='dark';d.dataset.theme=dk?'light':'dark';window.__theme=d.dataset.theme;$('themeBtn').textContent=dk?'Modo oscuro':'Modo claro';render()};
-  if(window.__theme?window.__theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.dataset.theme='dark';$('themeBtn').textContent='Modo claro'}
+  if($('themeBtn'))$('themeBtn').onclick=()=>{const d=document.documentElement;const dk=d.dataset.theme==='dark';d.dataset.theme=dk?'light':'dark';window.__theme=d.dataset.theme;$('themeBtn').textContent=dk?'Modo oscuro':'Modo claro';render()};
+  if(window.__theme?window.__theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.dataset.theme='dark';if($('themeBtn'))$('themeBtn').textContent='Modo claro'}
 }
 function setCta(ci){S.cta=S.cta===ci?-1:ci;$('cta').value=S.cta;S.page=0;render()}
 function setTer(i){const id=terNom[i].id;S.ter=S.ter===id?'':id;$('ter').value=S.ter;computeTerMatch();S.page=0;render()}
