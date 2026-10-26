@@ -192,15 +192,48 @@ tr.acc td:first-child{padding-left:42px}
 </div>
 
 <div class="card c12" style="margin-bottom:16px" id="movs">
-  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-    <h2 style="margin:0">Movimientos <small id="movSub"></small></h2>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <input type="search" id="movQ" placeholder="Buscar en detalle, comprobante o tercero…" style="min-width:260px">
-      <div class="seg" id="sortSeg"><button data-s="abs" class="on">Mayor valor</button><button data-s="date">Fecha</button></div>
-      <button id="csvMov">Exportar movimientos CSV</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+    <div>
+      <h2 style="margin:0">Movimientos <small id="movSub"></small></h2>
+      <div id="movKpis" style="font-size:11.5px;color:var(--muted);margin-top:2px"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <!-- Selector de concepto contable -->
+      <select id="movConcepto" style="padding:6px 9px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">
+        <option value="">Todos los conceptos</option>
+        <option value="nomina">💼 Nómina y personal (Vacaciones, aux. transp., etc.)</option>
+        <option value="honorarios">📑 Honorarios y asesorías</option>
+        <option value="arrendamientos">🏢 Arrendamientos</option>
+        <option value="seguros">🛡️ Seguros y pólizas</option>
+        <option value="servicios">💡 Servicios públicos y comunicaciones</option>
+        <option value="mantenimiento">🔧 Mantenimiento y reparaciones</option>
+        <option value="viajes">✈️ Viajes, combustible y transporte</option>
+        <option value="impuestos">🏛️ Impuestos y gravámenes (GMF 4x1000)</option>
+        <option value="financieros">🏦 Gastos financieros y bancos</option>
+        <option value="costos">📦 Costos operativos y ventas (Clase 6)</option>
+        <option value="ingresos">📈 Ingresos (Clase 4)</option>
+      </select>
+
+      <input type="search" id="movQ" placeholder="Buscar en concepto, cuenta, tercero o detalle…" style="min-width:240px">
+
+      <!-- Selector de ordenación -->
+      <select id="movSort" style="padding:6px 9px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">
+        <option value="abs">Mayor valor absoluto</option>
+        <option value="date-desc">Fecha: Más reciente primero</option>
+        <option value="date-asc">Fecha: Más antigua primero</option>
+        <option value="val-desc">Valor: Mayor a menor (+ a -)</option>
+        <option value="val-asc">Valor: Menor a mayor (- a +)</option>
+        <option value="cta">Cuenta contable (código)</option>
+        <option value="ter">Tercero (A - Z)</option>
+      </select>
+
+      <button id="btnExcelMov" style="background:#16a34a;color:#fff;border:none;font-weight:600">📊 Excel</button>
+      <button id="btnPdfMov" style="background:#dc2626;color:#fff;border:none;font-weight:600">📄 PDF</button>
+      <button id="csvMov">CSV</button>
     </div>
   </div>
   <div class="tbl-wrap" style="max-height:560px"><table id="movT" class="tbl2"></table></div>
+
   <div class="pager"><button id="pPrev">‹</button><span id="pInfo" class="hint"></span><button id="pNext">›</button></div>
   <div class="note">Valor = saldo movimiento tal como viene en el archivo (débito positivo, crédito negativo). El detalle se muestra recortado a 90 caracteres.</div>
 </div>
@@ -379,7 +412,7 @@ const compType=D.comps.map(c=>c.split('-')[0]);
 const ctypes=[...new Set(compType)].sort();
 const terNom=D.ters.map(t=>{const i=t.indexOf('|');return {id:t.slice(0,i),nom:t.slice(i+1)}});
 const terLow=D.ters.map(t=>t.toLowerCase());
-const S={m1:months[0],m2:months[months.length-1],cls:'',cta:-1,reg:'',cc:-1,cmp:'',ter:'',dup:false,unit:'M',mode:'mes',pct:'v',tab:'inc',acct:'',q:'',sort:'abs',page:0,open:{'41':1,'61':1,'G':1,'42':1}};
+const S={m1:months[0],m2:months[months.length-1],cls:'',cta:-1,reg:'',cc:-1,cmp:'',ter:'',dup:false,unit:'M',mode:'mes',pct:'v',tab:'inc',acct:'',q:'',concepto:'',sort:'abs',page:0,open:{'41':1,'61':1,'G':1,'42':1}};
 const $=id=>document.getElementById(id);
 const isInc=c=>c==='41'||c==='42';
 const nat=(cls,v)=>isInc(cls)?-v:v;
@@ -442,6 +475,13 @@ function agg(){
 function initFilters(){
   $('nrows').textContent=nf0.format(NR);
   $('per').textContent=MESL[months[0]]+' – '+MESL[months[months.length-1]]+' '+YR;
+  if($('lblActualizado') && D.audit && D.audit.updatedAt){
+    $('lblActualizado').textContent=D.audit.updatedAt;
+  }
+  if($('lblCorte')){
+    $('lblCorte').textContent=D.audit && D.audit.corteMesVencido ? `A mes vencido (${D.audit.corteMesVencido})` : 'A mes vencido';
+  }
+
   if(D.dets.length===1)$('movT').classList.add('nodet');
   $('m1').innerHTML=months.map(m=>`<option value="${m}">${MESL[m]}</option>`).join('');$('m2').innerHTML=$('m1').innerHTML;$('m2').value=S.m2;
   $('cls').innerHTML='<option value="">Todas</option>'+['41','42','61','G'].map(c=>`<option value="${c}">${c==='G'?'':c+' · '}${esc(CLSN[c])}</option>`).join('');
@@ -600,23 +640,143 @@ $('csv').onclick=()=>{
 };
 
 /* ---------- movimientos ---------- */
+const CONCEPTOS_MAP = {
+  nomina: {
+    prefijos: ['5105','5205','7205','2505','2370','2380'],
+    palabras: ['nomina','sueldo','salario','vacacion','vacaciones','cesantia','cesantias','prima','transporte','auxilio','dotacion','incapacidad','seguridad social','salud','pension','arl','compensacion','sena','icbf','bonific']
+  },
+  honorarios: {
+    prefijos: ['5110','5210'],
+    palabras: ['honorario','honorarios','asesor','asesoria','consultor','abogad','contador','auditor']
+  },
+  arrendamientos: {
+    prefijos: ['5120','5220'],
+    palabras: ['arriend','alquiler','canon','bodega','oficina']
+  },
+  seguros: {
+    prefijos: ['5130','5230'],
+    palabras: ['seguro','seguros','poliza','polizas','amparo','asegura']
+  },
+  servicios: {
+    prefijos: ['5135','5235'],
+    palabras: ['servicio','energia','agua','acueducto','telefono','internet','celular','aseo','vigilanc']
+  },
+  mantenimiento: {
+    prefijos: ['5145','5245'],
+    palabras: ['mantenimient','reparacion','locativ','vehicul','taller','repuesto']
+  },
+  viajes: {
+    prefijos: ['5155','5255'],
+    palabras: ['viaje','viatico','viaticos','combustible','gasolina','peaje','taxi','tiquete','transporte']
+  },
+  impuestos: {
+    prefijos: ['5115','5215','5315'],
+    palabras: ['impuesto','gravamen','4x1000','gmf','ica','predial','renta','retencion']
+  },
+  financieros: {
+    prefijos: ['5305'],
+    palabras: ['financier','interes','intereses','comision bancaria','sobregiro','banco']
+  },
+  costos: {
+    prefijos: ['61','62'],
+    palabras: ['costo','costos','costo de venta','operacion']
+  },
+  ingresos: {
+    prefijos: ['41','42'],
+    palabras: ['ingreso','ingresos','venta','facturac']
+  }
+};
+
 const PS=50;
 function movList(A){
   let L=A.F;
-  if(S.q){const q=S.q;L=L.filter(i=>{const r=D.rows[i];return D.dets[r[5]].toLowerCase().includes(q)||D.comps[r[4]].toLowerCase().includes(q)||terLow[r[3]].includes(q)})}
-  L=L.slice();
-  if(S.sort==='abs')L.sort((a,b)=>Math.abs(D.rows[b][6])-Math.abs(D.rows[a][6]));else L.sort((a,b)=>D.rows[a][0]-D.rows[b][0]||a-b);
+  const cSel = $('movConcepto') ? $('movConcepto').value : S.concepto;
+  const q = (S.q || '').toLowerCase().trim();
+
+  // Filtro por concepto seleccionado en el dropdown
+  if(cSel && CONCEPTOS_MAP[cSel]){
+    const conf = CONCEPTOS_MAP[cSel];
+    L = L.filter(i => {
+      const cod = cuentas[D.rows[i][1]].cod;
+      return conf.prefijos.some(p => cod.startsWith(p));
+    });
+  }
+
+  // Búsqueda inteligente por texto (detecta concepto o busca directo)
+  if(q){
+    let cDetectado = null;
+    for(const k of Object.keys(CONCEPTOS_MAP)){
+      if(CONCEPTOS_MAP[k].palabras.some(p => q.includes(p) || p.includes(q))){
+        cDetectado = CONCEPTOS_MAP[k];
+        break;
+      }
+    }
+
+    L = L.filter(i => {
+      const r = D.rows[i], c = cuentas[r[1]];
+      const cod = c.cod.toLowerCase(), nom = c.nom.toLowerCase();
+      const comp = D.comps[r[4]].toLowerCase(), det = D.dets[r[5]].toLowerCase(), ter = terLow[r[3]];
+
+      if(cDetectado && cDetectado.prefijos.some(p => c.cod.startsWith(p))) return true;
+      return cod.includes(q) || nom.includes(q) || comp.includes(q) || det.includes(q) || ter.includes(q);
+    });
+  }
+
+  L = L.slice();
+  const sortMode = $('movSort') ? $('movSort').value : (S.sort || 'abs');
+  if(sortMode === 'abs') L.sort((a,b) => Math.abs(D.rows[b][6]) - Math.abs(D.rows[a][6]));
+  else if(sortMode === 'date-desc') L.sort((a,b) => D.rows[b][0] - D.rows[a][0] || b - a);
+  else if(sortMode === 'date-asc') L.sort((a,b) => D.rows[a][0] - D.rows[b][0] || a - b);
+  else if(sortMode === 'val-desc') L.sort((a,b) => D.rows[b][6] - D.rows[a][6]);
+  else if(sortMode === 'val-asc') L.sort((a,b) => D.rows[a][6] - D.rows[b][6]);
+  else if(sortMode === 'cta') L.sort((a,b) => cuentas[D.rows[a][1]].cod.localeCompare(cuentas[D.rows[b][1]].cod));
+  else if(sortMode === 'ter') L.sort((a,b) => terNom[D.rows[a][3]].nom.localeCompare(terNom[D.rows[b][3]].nom));
   return L;
 }
+
 function renderMovs(A){
-  if(!A)return;const L=movList(A);const pages=Math.max(1,Math.ceil(L.length/PS));S.page=Math.min(S.page,pages-1);
+  if(!A)return;
+  const L=movList(A);
+  const pages=Math.max(1,Math.ceil(L.length/PS));
+  S.page=Math.min(S.page,pages-1);
   const sl=L.slice(S.page*PS,S.page*PS+PS);
+
+  let deb=0, cre=0;
+  L.forEach(i => { const v=D.rows[i][6]; if(v>0) deb+=v; else cre+=Math.abs(v); });
+  const neto = deb - cre;
+
   $('movSub').textContent=`${nf0.format(L.length)} de ${nf0.format(NR)} movimientos`;
+  if($('movKpis')){
+    $('movKpis').innerHTML=`<b>Débitos:</b> $${nf0.format(deb)} | <b>Créditos:</b> $${nf0.format(cre)} | <b>Neto:</b> $${nf0.format(neto)}`;
+  }
+
   $('movT').innerHTML=`<thead><tr><th class="l">Fecha</th><th class="l">Comprobante</th><th class="l">Cuenta</th><th class="l">Tercero</th><th class="l">Centro de costo</th><th class="l">Detalle</th><th>Valor (déb + / créd −)</th></tr></thead><tbody>`+sl.map(i=>{const r=D.rows[i],c=cuentas[r[1]];
     return `<tr><td class="l">${dstr(r[0])}</td><td class="l">${esc(D.comps[r[4]])}${r[7]?'<span class="badge" title="Mismo comprobante, cuenta, tercero, fecha, detalle y valor que otra línea">posible duplicado</span>':''}</td><td class="l" title="${esc(c.nom)}">${c.cod} ${esc(c.nom.length>26?c.nom.slice(0,25)+'…':c.nom)}</td><td class="l" title="${esc(terNom[r[3]].id)}">${esc(terNom[r[3]].nom)}</td><td class="l">${esc(D.ccs[r[2]])}</td><td class="l det" title="${esc(D.dets[r[5]])}">${esc(D.dets[r[5]])}</td><td${r[6]<0?' class="neg"':''}>${nf0.format(r[6])}</td></tr>`}).join('')+'</tbody>';
-  $('pInfo').textContent=`Página ${S.page+1} de ${pages}`;$('pPrev').disabled=S.page===0;$('pNext').disabled=S.page>=pages-1;
+  $('pInfo').textContent=`Página ${S.page+1} de ${pages}`;
+  $('pPrev').disabled=S.page===0;
+  $('pNext').disabled=S.page>=pages-1;
 }
+
+if($('movConcepto')) $('movConcepto').onchange=()=>{ S.concepto=$('movConcepto').value; S.page=0; renderMovs(CUR); };
+if($('movSort')) $('movSort').onchange=()=>{ S.sort=$('movSort').value; S.page=0; renderMovs(CUR); };
+if($('btnExcelMov')) $('btnExcelMov').onclick=function(){ exportX('mov', this); };
+if($('btnPdfMov')) $('btnPdfMov').onclick=function(){
+  const L=movList(CUR);
+  if(!L.length){ alert('No hay movimientos que coincidan con la búsqueda.'); return; }
+  const cTxt = $('movConcepto') && $('movConcepto').selectedIndex > 0 ? $('movConcepto').options[$('movConcepto').selectedIndex].text : 'Todos';
+  const qTxt = S.q ? ` · Búsqueda: "${S.q}"` : '';
+  const rowsHtml = L.map(i => {
+    const r=D.rows[i], c=cuentas[r[1]], t=terNom[r[3]];
+    return `<tr><td>${dstr(r[0])}</td><td>${D.comps[r[4]]||''}</td><td>${c.cod}</td><td>${c.nom}</td><td>${t.id} - ${t.nom}</td><td>${D.dets[r[5]]||''}</td><td style="text-align:right">${nf0.format(r[6])}</td></tr>`;
+  }).join('');
+  const w = window.open('','_blank');
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Reporte de Movimientos</title><style>body{font:11px system-ui,sans-serif;margin:16px;color:#111}h2{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #ddd;padding:4px 6px;font-size:10px}th{background:#f3f4f6}@media print{button{display:none}@page{size:landscape;margin:8mm}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>AGILEX EXPRESS S.A.S. — Reporte de Movimientos</h2><div>Concepto: <b>${cTxt}</b>${qTxt} | Registros: <b>${L.length}</b></div></div><button onclick="window.print()" style="padding:6px 12px;background:#0284c7;color:#fff;border:none;border-radius:4px;cursor:pointer">Imprimir / Guardar PDF</button></div><table><thead><tr><th>Fecha</th><th>Comp.</th><th>Cuenta</th><th>Nombre Cuenta</th><th>Tercero</th><th>Detalle</th><th style="text-align:right">Valor</th></tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`);
+  w.document.close();
+  setTimeout(()=>w.print(), 500);
+};
+
 $('csvMov').onclick=()=>{
+
   const L=movList(CUR);const lines=[['Fecha','Comprobante','Código cuenta','Cuenta','NIT','Tercero','Centro de costo','Detalle','Valor','Posible duplicado'].map(q2).join(';')];
   L.forEach(i=>{const r=D.rows[i],c=cuentas[r[1]];lines.push([dstr(r[0]),D.comps[r[4]],c.cod,c.nom,terNom[r[3]].id,terNom[r[3]].nom,D.ccs[r[2]],D.dets[r[5]],String(r[6]).replace('.',','),r[7]?'Sí':''].map(q2).join(';'))});
   download('agilex_movimientos_filtrados_2026.csv',lines.join('\r\n'));
