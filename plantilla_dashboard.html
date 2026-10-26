@@ -764,18 +764,85 @@ function renderMovs(A){
 
 if($('movConcepto')) $('movConcepto').onchange=()=>{ S.concepto=$('movConcepto').value; S.page=0; renderMovs(CUR); };
 if($('movSort')) $('movSort').onchange=()=>{ S.sort=$('movSort').value; S.page=0; renderMovs(CUR); };
-if($('btnExcelMov')) $('btnExcelMov').onclick=function(){ exportX('mov', this); };
+if($('btnExcelMov')) $('btnExcelMov').onclick=function(){ (window.__exportX||exportX)('mov', this); };
+/* ---------- gráficos de comportamiento (Excel y PDF de movimientos) ---------- */
+const GC={deb:'#3434c9',cre:'#f2ae35',net:'#0e5692',grid:'#e1e8f1',ink:'#0c2340',mut:'#5d6f86'};
+function movFilterLine(){
+  const p=[];
+  if($('movConcepto')&&$('movConcepto').selectedIndex>0)p.push('Concepto: '+$('movConcepto').options[$('movConcepto').selectedIndex].text);
+  if(S.q)p.push('Búsqueda: "'+S.q+'"');
+  return p.join(' · ');
+}
+function movStats(L){
+  const byM=new Map(),acc=new Map(),ter=new Map();
+  for(const i of L){
+    const r=D.rows[i],v=r[6],m=Math.floor(r[0]/100);
+    let o=byM.get(m);if(!o){o={m,deb:0,cre:0,n:0};byM.set(m,o)}
+    o.n++;if(v>0)o.deb+=v;else o.cre-=v;
+    acc.set(r[1],(acc.get(r[1])||0)+v);ter.set(r[3],(ter.get(r[3])||0)+v);
+  }
+  const ms=months.filter(m=>m>=S.m1&&m<=S.m2).map(m=>byM.get(m)||{m,deb:0,cre:0,n:0});
+  ms.forEach(o=>o.net=o.deb-o.cre);
+  const top=(mp,lab)=>[...mp.entries()].filter(([,v])=>Math.abs(v)>0.5).map(([k,v])=>({label:lab(k),v})).sort((a,b)=>Math.abs(b.v)-Math.abs(a.v)).slice(0,10);
+  return {ms,
+    accs:top(acc,ci=>cuentas[ci].cod+' '+cuentas[ci].nom),
+    ters:top(ter,ti=>terNom[ti].nom||terNom[ti].id)};
+}
+const svgTxt=(x,y,t,o='')=>`<text x="${x}" y="${y}" ${o}>${esc(t)}</text>`;
+function svgMonthly(ms){
+  const W=1000,H=400,l=78,r=24,t=62,b=46,pw=W-l-r,ph=H-t-b;
+  let mx=0,mn=0;ms.forEach(o=>{mx=Math.max(mx,o.deb,o.cre,o.net);mn=Math.min(mn,o.net)});if(mx===mn)mx=mn+1;
+  const tk=niceTicks(mn,mx);if(tk.length<2)tk.push(mx);const stp=tk[1]-tk[0];if(tk[tk.length-1]<mx)tk.push(tk[tk.length-1]+stp);if(tk[0]>mn)tk.unshift(tk[0]-stp);mn=tk[0];mx=tk[tk.length-1];
+  const y=v=>t+ph-(v-mn)/(mx-mn)*ph;
+  let s=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Calibri,Arial,sans-serif"><rect width="${W}" height="${H}" fill="#fff"/>`;
+  s+=svgTxt(16,26,'Comportamiento mensual de los movimientos','font-size="17" font-weight="700" fill="'+GC.ink+'"');
+  [['Débitos',GC.deb],['Créditos',GC.cre],['Neto (déb − créd)',GC.net]].forEach(([n,c],i)=>{const x=16+i*150;s+=`<rect x="${x}" y="38" width="12" height="12" rx="2" fill="${c}"/>`+svgTxt(x+17,49,n,'font-size="12" fill="'+GC.mut+'"')});
+  for(const v of tk){const yy=y(v);s+=`<line x1="${l}" x2="${W-r}" y1="${yy}" y2="${yy}" stroke="${GC.grid}"/>`+svgTxt(l-8,yy+4,axis(v),'font-size="11" text-anchor="end" fill="'+GC.mut+'"')}
+  s+=`<line x1="${l}" x2="${W-r}" y1="${y(0)}" y2="${y(0)}" stroke="#9aa9bc"/>`;
+  const gw=pw/Math.max(1,ms.length),bw=Math.min(34,gw*.32);
+  const pts=[];
+  ms.forEach((o,i)=>{const cx=l+gw*i+gw/2;
+    s+=`<rect x="${cx-bw-2}" y="${y(o.deb)}" width="${bw}" height="${Math.max(0,y(0)-y(o.deb))}" rx="2" fill="${GC.deb}"/>`;
+    s+=`<rect x="${cx+2}" y="${y(o.cre)}" width="${bw}" height="${Math.max(0,y(0)-y(o.cre))}" rx="2" fill="${GC.cre}"/>`;
+    s+=svgTxt(cx,H-b+18,MES[o.m],'font-size="12" text-anchor="middle" fill="'+GC.mut+'"');
+    pts.push([cx,y(o.net)]);});
+  if(pts.length>1)s+=`<polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" stroke="${GC.net}" stroke-width="2.5"/>`;
+  pts.forEach(([x,yy],i)=>{s+=`<circle cx="${x}" cy="${yy}" r="4" fill="#fff" stroke="${GC.net}" stroke-width="2"/>`+svgTxt(x,yy-9,axis(ms[i].net),'font-size="10.5" text-anchor="middle" font-weight="700" fill="'+GC.net+'"')});
+  return {svg:s+'</svg>',w:W,h:H};
+}
+function svgHBar(title,items){
+  const W=1000,row=28,t=58,H=t+Math.max(1,items.length)*row+16,lx=16,bx=360,bwMax=500;
+  const mx=Math.max(1,...items.map(o=>Math.abs(o.v)));
+  let s=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Calibri,Arial,sans-serif"><rect width="${W}" height="${H}" fill="#fff"/>`;
+  s+=svgTxt(16,26,title,'font-size="17" font-weight="700" fill="'+GC.ink+'"');
+  [['Saldo débito',GC.deb],['Saldo crédito',GC.cre]].forEach(([n,c],i)=>{const x=16+i*130;s+=`<rect x="${x}" y="36" width="12" height="12" rx="2" fill="${c}"/>`+svgTxt(x+17,47,n,'font-size="12" fill="'+GC.mut+'"')});
+  if(!items.length)s+=svgTxt(16,t+18,'Sin datos','font-size="12" fill="'+GC.mut+'"');
+  items.forEach((o,i)=>{const yy=t+i*row,w=Math.max(2,Math.abs(o.v)/mx*bwMax),lab=o.label.length>52?o.label.slice(0,51)+'…':o.label;
+    s+=svgTxt(lx,yy+17,lab,'font-size="12.5" fill="'+GC.ink+'"');
+    s+=`<rect x="${bx}" y="${yy+5}" width="${bwMax}" height="16" rx="3" fill="#f1f4f9"/><rect x="${bx}" y="${yy+5}" width="${w}" height="16" rx="3" fill="${o.v>=0?GC.deb:GC.cre}"/>`;
+    s+=svgTxt(bx+bwMax+10,yy+17,'$'+nf0.format(o.v),'font-size="12.5" font-weight="700" fill="'+GC.ink+'"');});
+  return {svg:s+'</svg>',w:W,h:H};
+}
+function movChartSet(L){const st=movStats(L);return {st,charts:[svgMonthly(st.ms),svgHBar('Top 10 cuentas por valor neto',st.accs),svgHBar('Top 10 terceros por valor neto',st.ters)]}}
+async function svgPng(c){
+  const img=new Image();
+  await new Promise((ok,ko)=>{img.onload=ok;img.onerror=()=>ko(new Error('No se pudo dibujar el gráfico'));img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(c.svg)});
+  const cv=document.createElement('canvas');cv.width=c.w*2;cv.height=c.h*2;const x=cv.getContext('2d');
+  x.fillStyle='#fff';x.fillRect(0,0,cv.width,cv.height);x.drawImage(img,0,0,cv.width,cv.height);
+  return cv.toDataURL('image/png').split(',')[1];
+}
 if($('btnPdfMov')) $('btnPdfMov').onclick=function(){
   const L=movList(CUR);
   if(!L.length){ alert('No hay movimientos que coincidan con la búsqueda.'); return; }
   const cTxt = $('movConcepto') && $('movConcepto').selectedIndex > 0 ? $('movConcepto').options[$('movConcepto').selectedIndex].text : 'Todos';
   const qTxt = S.q ? ` · Búsqueda: "${S.q}"` : '';
+  const chartsHtml = '<div class="charts">'+movChartSet(L).charts.map(c=>'<div class="ch">'+c.svg.replace(/ width="\d+" height="\d+"/,' width="100%"')+'</div>').join('')+'</div>';
   const rowsHtml = L.map(i => {
     const r=D.rows[i], c=cuentas[r[1]], t=terNom[r[3]];
     return `<tr><td>${dstr(r[0])}</td><td>${D.comps[r[4]]||''}</td><td>${c.cod}</td><td>${c.nom}</td><td>${t.id} - ${t.nom}</td><td>${D.dets[r[5]]||''}</td><td style="text-align:right">${nf0.format(r[6])}</td></tr>`;
   }).join('');
   const w = window.open('','_blank');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Reporte de Movimientos</title><style>body{font:11px system-ui,sans-serif;margin:16px;color:#111}h2{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #ddd;padding:4px 6px;font-size:10px}th{background:#f3f4f6}@media print{button{display:none}@page{size:landscape;margin:8mm}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>AGILEX EXPRESS S.A.S. — Reporte de Movimientos</h2><div>Concepto: <b>${cTxt}</b>${qTxt} | Registros: <b>${L.length}</b></div></div><button onclick="window.print()" style="padding:6px 12px;background:#0284c7;color:#fff;border:none;border-radius:4px;cursor:pointer">Imprimir / Guardar PDF</button></div><table><thead><tr><th>Fecha</th><th>Comp.</th><th>Cuenta</th><th>Nombre Cuenta</th><th>Tercero</th><th>Detalle</th><th style="text-align:right">Valor</th></tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`);
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Reporte de Movimientos</title><style>body{font:11px system-ui,sans-serif;margin:16px;color:#111}h2{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #ddd;padding:4px 6px;font-size:10px}th{background:#f3f4f6}.charts{display:grid;gap:10px;margin-top:12px}.ch{border:1px solid #e1e8f1;border-radius:6px;padding:4px;page-break-inside:avoid;break-inside:avoid}.ch svg{display:block;height:auto}@media print{button{display:none}.charts{page-break-after:always}@page{size:landscape;margin:8mm}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>AGILEX EXPRESS S.A.S. — Reporte de Movimientos</h2><div>Concepto: <b>${cTxt}</b>${qTxt} | Registros: <b>${L.length}</b></div></div><button onclick="window.print()" style="padding:6px 12px;background:#0284c7;color:#fff;border:none;border-radius:4px;cursor:pointer">Imprimir / Guardar PDF</button></div>${chartsHtml}<table><thead><tr><th>Fecha</th><th>Comp.</th><th>Cuenta</th><th>Nombre Cuenta</th><th>Tercero</th><th>Detalle</th><th style="text-align:right">Valor</th></tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`);
   w.document.close();
   setTimeout(()=>w.print(), 500);
 };
@@ -1010,6 +1077,24 @@ function sTer(wb,tab){
   finish(ws,7,5,tr,2);
 }
 /* ---------- Movimientos ---------- */
+async function sMovG(wb){
+  const L=movList(CUR);const {st,charts}=movChartSet(L);
+  const ws=sheet(wb,'Gráficos movimientos','Comportamiento de los movimientos',[16,16,22,22,22,16,16,16,16,16]);
+  const ex=movFilterLine();if(ex){const c=ws.getCell('A4');c.value=c.value+'   |   '+ex}
+  head(ws,7,['Mes','N.º movimientos','Débitos','Créditos','Neto (déb − créd)'],1);
+  let r=8;
+  st.ms.forEach(o=>{const row=ws.getRow(r++);const r2=x=>Math.round(x*100)/100;row.values=[MESL[o.m],o.n,r2(o.deb),r2(o.cre),r2(o.net)]});
+  const tr=ws.getRow(r);tr.values=['Total',{formula:`SUM(B8:B${r-1})`},{formula:`SUM(C8:C${r-1})`},{formula:`SUM(D8:D${r-1})`},{formula:`SUM(E8:E${r-1})`}];
+  tr.eachCell(c=>{c.font={bold:true};c.fill=fill(C.hl)});
+  for(let i=8;i<=r;i++){ws.getCell('B'+i).numFmt='#,##0';['C','D','E'].forEach(k=>ws.getCell(k+i).numFmt=PES)}
+  r+=2;
+  for(const c of charts){
+    const id=wb.addImage({base64:await svgPng(c),extension:'png'});
+    const w=900,h=Math.round(c.h*w/c.w);
+    ws.addImage(id,{tl:{col:0,row:r-1},ext:{width:w,height:h},editAs:'oneCell'});
+    r+=Math.ceil(h/20)+2;
+  }
+}
 function sMov(wb){
   const L=movList(CUR);
   const ws=sheet(wb,'Movimientos','Movimientos contables (detalle)',[12,14,12,36,14,40,32,58,18,12]);
@@ -1025,7 +1110,7 @@ function sMov(wb){
 }
 const BUILD={resumen:sResumen,evo:sEvo,er:sER,
   ing:wb=>sCuentas(wb,'Ingresos por cuenta','Ingresos por cuenta',isInc),cos:wb=>sCuentas(wb,'Costos y gastos por cuenta','Costos y gastos por cuenta',c=>!isInc(c)),
-  cli:wb=>sTer(wb,'inc'),pro:wb=>sTer(wb,'exp'),mov:sMov};
+  cli:wb=>sTer(wb,'inc'),pro:wb=>sTer(wb,'exp'),movg:sMovG,mov:sMov};
 const NAMES={resumen:'Resumen',evo:'Evolucion',er:'EstadoResultados',ing:'IngresosPorCuenta',cos:'CostosGastosPorCuenta',cli:'Clientes',pro:'Proveedores',mov:'Movimientos',all:'Informe_completo'};
 let busy=false;
 async function exportX(key,btn){
@@ -1036,8 +1121,8 @@ async function exportX(key,btn){
     const wb=new ExcelJS.Workbook();wb.creator='OpenLink';wb.created=new Date();wb.calcProperties={fullCalcOnLoad:true};
     IMG.ag=wb.addImage({base64:IMG.a,extension:'png'});IMG.ol=wb.addImage({base64:IMG.o,extension:'png'});
     const k=key==='ter'?(S.tab==='inc'?'cli':'pro'):key;
-    const list=k==='all'?['resumen','evo','er','ing','cos','cli','pro','mov']:[k];
-    for(const x of list){BUILD[x](wb);await new Promise(r=>setTimeout(r,0))}
+    const list=k==='all'?['resumen','evo','er','ing','cos','cli','pro','movg','mov']:(k==='mov'?['movg','mov']:[k]);
+    for(const x of list){await BUILD[x](wb);await new Promise(r=>setTimeout(r,0))}
     wb.eachSheet(ws=>{const lim=ws.name==='Movimientos'?8:ws.rowCount;
       for(let i=1;i<=lim;i++){const rw=ws.getRow(i);if(!rw.hasValues&&i>6)continue;rw.eachCell({includeEmpty:true},c=>{const f=c.font;if(f&&Object.keys(f).length&&!f.name)c.font=Object.assign({name:'Calibri',family:2,size:11},f)})}});
     const buf=await wb.xlsx.writeBuffer();
