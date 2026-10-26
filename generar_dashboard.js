@@ -46,10 +46,18 @@ function getPreviousMonthEnd(now = new Date()) {
       end.getUTCDate()
   };
 }
-function parseAux(filePath) {
+function parseAux(filePath, periodEnd) {
   const wb = XLSX.readFile(filePath);
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
+  const dt = __date(v[C.fec]);
+  if (!dt) {
+  bad++;
+  continue;
+}
+
+const movementDate = dt[0] * 10000 + dt[1] * 100 + dt[2];
+if (movementDate > periodEnd.key) continue;
 
   let maxCol = 0, maxRow = 0;
   for (const key of Object.keys(ws)) {
