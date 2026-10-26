@@ -170,7 +170,6 @@ function buildCube(P, catObj) {
     rows,
     year: P.year,
     audit: {
-        audit: {
       custom: 1,
       filas: rows.length,
       terceros: ters.length,
