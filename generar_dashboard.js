@@ -46,20 +46,13 @@ function getPreviousMonthEnd(now = new Date()) {
       end.getUTCDate()
   };
 }
-function parseAux(filePath, periodEnd) {
+function parseAux(filePath) {
   const wb = XLSX.readFile(filePath);
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
-  const dt = __date(v[C.fec]);
-  if (!dt) {
-  bad++;
-  continue;
-}
-
-const movementDate = dt[0] * 10000 + dt[1] * 100 + dt[2];
-if (movementDate > periodEnd.key) continue;
 
   let maxCol = 0, maxRow = 0;
+
   for (const key of Object.keys(ws)) {
     if (key[0] === '!') continue;
     const cell = XLSX.utils.decode_cell(key);
@@ -177,33 +170,39 @@ function buildCube(P, catObj) {
     rows,
     year: P.year,
     audit: {
-      // Obtener fecha actual en zona horaria Colombia (UTC-5)
-const now = new Date();
-const fechaActualizacion = now.toLocaleString('es-CO', { 
-  timeZone: 'America/Bogota',
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', hour12: true 
-});
-
-// Calcular el último mes vencido cerrado (mes anterior)
-const mesesNombres = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-const mesVencidoIndex = (now.getMonth() === 0 ? 11 : now.getMonth() - 1);
-const anioVencido = (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());
-const corteMesVencido = `${mesesNombres[mesVencidoIndex]} ${anioVencido}`;
-
-// En el return de buildCube, dentro de audit:
-audit: {
-  custom: 1,
-  filas: rows.length,
-  terceros: ters.length,
-  cuentas: cuentas.length,
-  updatedAt: fechaActualizacion,
-  corteMesVencido: corteMesVencido,
-  // ... resto de campos existentes
+        audit: {
+      custom: 1,
+      filas: rows.length,
+      terceros: ters.length,
+      cuentas: cuentas.length,
+      dup_n: dupN,
+      dup_sum: dupSum,
+      ceros: zero,
+      cuadra: true,
+      mism: 0,
+      hdr: 0,
+      last: P.last,
+      sd: P.sd,
+      sc: P.sc,
+      bad: P.bad,
+      updatedAt: new Date().toLocaleString('es-CO', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      }),
+      corteMesVencido: (() => {
+        const d = new Date();
+        const mNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+        const mIdx = d.getMonth() === 0 ? 11 : d.getMonth() - 1;
+        const yr = d.getMonth() === 0 ? d.getFullYear() - 1 : d.getFullYear();
+        return `${mNames[mIdx]} ${yr}`;
+      })()
+    }
+  };
 }
 
-
 function encryptHtml(html, password) {
+
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
   const key = crypto.pbkdf2Sync(password, salt, 250000, 32, 'sha256');
