@@ -26,7 +26,26 @@ function __date(v) {
   }
   return null;
 }
+function getPreviousMonthEnd(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Bogota',
+    year: 'numeric',
+    month: '2-digit'
+  }).formatToParts(now);
 
+  const year = Number(parts.find(p => p.type === 'year').value);
+  const month = Number(parts.find(p => p.type === 'month').value);
+  const end = new Date(Date.UTC(year, month - 1, 0));
+
+  return {
+    year: end.getUTCFullYear(),
+    month: end.getUTCMonth() + 1,
+    day: end.getUTCDate(),
+    key: end.getUTCFullYear() * 10000 +
+      (end.getUTCMonth() + 1) * 100 +
+      end.getUTCDate()
+  };
+}
 function parseAux(filePath) {
   const wb = XLSX.readFile(filePath);
   const sheetName = wb.SheetNames[0];
