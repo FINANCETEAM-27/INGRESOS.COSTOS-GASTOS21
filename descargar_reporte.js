@@ -2,21 +2,53 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-(async () => {
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    acceptDownloads: true,
-    viewport: { width: 1366, height: 768 }
-  });
-  const page = await context.newPage();
+async function ejecutarLogin(page, user, pass) {
+  console.log('Abriendo pantalla de autenticacion de Siigo...');
+  await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
+  console.log('Ingresando credenciales...');
+  const userInput = page.locator('#siigoSignInName');
+  await userInput.waitFor({ state: 'attached', timeout: 30000 });
+  await userInput.fill(user);
+
+  const passInput = page.locator('#siigoPassword');
+  await passInput.fill(pass);
+
+  console.log('Enviando formulario de acceso...');
+  const nextBtn = page.locator('#siigoNext');
+  await nextBtn.click();
+
+  console.log('Esperando redireccion a Siigo Nube...');
+  await page.waitForURL(url => !url.href.includes('account.siigo.com'), { timeout: 60000 });
+  console.log('Autenticacion exitosa.');
+}
+
+(async () => {
   const user = process.env.SIIGO_USER;
   const pass = process.env.SIIGO_PASS;
+  const storageStateRaw = process.env.SIIGO_STORAGE_STATE;
 
-  if (!user || !pass) {
-    console.error('Faltan las credenciales SIIGO_USER o SIIGO_PASS');
-    process.exit(1);
+  const tempStatePath = path.join(__dirname, 'siigo_session.json');
+  const contextOptions = {
+    acceptDownloads: true,
+    viewport: { width: 1366, height: 768 }
+  };
+
+  let hasStoredSession = false;
+  if (storageStateRaw && storageStateRaw.trim().length > 10) {
+    try {
+      fs.writeFileSync(tempStatePath, storageStateRaw.trim());
+      contextOptions.storageState = tempStatePath;
+      hasStoredSession = true;
+      console.log('Se detecto sesion guardada en SIIGO_STORAGE_STATE.');
+    } catch (e) {
+      console.warn('No se pudo escribir archivo temporal de sesion:', e.message);
+    }
   }
+
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext(contextOptions);
+  const page = await context.newPage();
 
   // Interceptar descargas y respuestas de archivos
   let downloadedFilePath = null;
@@ -40,31 +72,40 @@ const path = require('path');
   });
 
   try {
-    console.log('1. Abriendo pantalla de autenticacion de Siigo...');
-    await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    if (hasStoredSession) {
+      console.log('1. Accediendo con la sesion autenticada guardada...');
+      await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(6000);
 
-    console.log('2. Ingresando credenciales...');
-    const userInput = page.locator('#siigoSignInName');
-    await userInput.waitFor({ state: 'attached', timeout: 30000 });
-    await userInput.fill(user);
+      // Si nos redirigio a login, la sesion expiro
+      if (page.url().includes('account.siigo.com') || page.url().includes('/login')) {
+        console.warn('La sesion guardada ha expirado o requiere nueva verificacion.');
+        if (user && pass) {
+          console.log('Intentando re-autenticacion tradicional...');
+          await ejecutarLogin(page, user, pass);
+          console.log('Navegando al reporte tras login...');
+          await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
+          await page.waitForTimeout(6000);
+        } else {
+          throw new Error('La sesion en SIIGO_STORAGE_STATE expiro y no hay credenciales SIIGO_USER/SIIGO_PASS disponibles.');
+        }
+      } else {
+        console.log('Sesion valida. Acceso directo concedido.');
+      }
+    } else {
+      console.log('1. No hay sesion guardada. Iniciando login tradicional...');
+      if (!user || !pass) {
+        console.error('Faltan las credenciales SIIGO_USER o SIIGO_PASS');
+        process.exit(1);
+      }
+      await ejecutarLogin(page, user, pass);
+      console.log('Esperando carga del entorno inicial...');
+      await page.waitForTimeout(6000);
+      console.log('Navegando al reporte: Movimiento auxiliar de tercero por cuenta contable en Excel...');
+      await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(6000);
+    }
 
-    const passInput = page.locator('#siigoPassword');
-    await passInput.fill(pass);
-    
-    console.log('3. Enviando formulario de acceso...');
-    const nextBtn = page.locator('#siigoNext');
-    await nextBtn.click();
-
-    console.log('4. Esperando redireccion a Siigo Nube...');
-    await page.waitForURL(url => !url.href.includes('account.siigo.com'), { timeout: 60000 });
-    console.log('5. Autenticacion exitosa.');
-
-    console.log('6. Esperando carga del entorno inicial...');
-    await page.waitForTimeout(6000);
-
-    console.log('7. Navegando al reporte: Movimiento auxiliar de tercero por cuenta contable en Excel...');
-    await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(6000);
     console.log('URL actual del reporte:', page.url());
 
     // Click en Generar reporte
@@ -91,7 +132,6 @@ const path = require('path');
       await excelOption.click();
       await page.waitForTimeout(3000);
     } else {
-      // Probar si el enlace <a> era el dropdown o submenu
       const linkExcel = page.locator('a:has-text("Excel"), button:has-text("Excel")').first();
       if (await linkExcel.count() > 0 && await linkExcel.isVisible()) {
         console.log('Pulsando enlace/boton Excel...');
@@ -125,7 +165,6 @@ const path = require('path');
           const { execSync } = require('child_process');
           execSync('node generar_dashboard.js', { stdio: 'inherit' });
           console.log('Dashboard index.html actualizado con exito.');
-          // Añadir index.html al staging de Git para que el workflow lo suba
           try {
             execSync('git add index.html', { stdio: 'inherit' });
           } catch (_) {}
@@ -150,6 +189,9 @@ const path = require('path');
     } catch (_) {}
     process.exit(1);
   } finally {
+    if (fs.existsSync(tempStatePath)) {
+      try { fs.unlinkSync(tempStatePath); } catch (_) {}
+    }
     await browser.close();
   }
 })();
