@@ -20,7 +20,7 @@ async function ejecutarLogin(page, user, pass) {
 
   console.log('Esperando redireccion a Siigo Nube...');
   await page.waitForURL(url => !url.href.includes('account.siigo.com'), { timeout: 60000 });
-  console.log('Autenticacion exitosa.');
+  console.log('Autenticacion inicial completada.');
 }
 
 (async () => {
@@ -76,23 +76,19 @@ async function ejecutarLogin(page, user, pass) {
       console.log('1. Accediendo a Siigo con la sesion autenticada guardada...');
       await page.goto('https://siigonube.siigo.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
       
-      console.log('2. Esperando consolidacion del entorno y redirecciones OAuth...');
-      await page.waitForURL(url => !url.href.includes('openid-callback') && !url.href.includes('oauth2'), { timeout: 60000 });
-      await page.waitForTimeout(6000);
+      console.log('2. Esperando consolidacion de sesion y callbacks OAuth...');
+      // Esperar activamente a que terminen las redirecciones de Microsoft B2C / Siigo
+      await page.waitForFunction(() => {
+        const href = window.location.href;
+        return !href.includes('account.siigo.com') && 
+               !href.includes('openid-callback') && 
+               !href.includes('oauth2') &&
+               (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
+      }, { timeout: 60000 });
 
-      // Si nos redirigio a login, la sesion expiro
-      if (page.url().includes('account.siigo.com') || page.url().includes('/login')) {
-        console.warn('La sesion guardada ha expirado o requiere nueva verificacion.');
-        if (user && pass) {
-          console.log('Intentando re-autenticacion tradicional...');
-          await ejecutarLogin(page, user, pass);
-          await page.waitForTimeout(6000);
-        } else {
-          throw new Error('La sesion en SIIGO_STORAGE_STATE expiro y no hay credenciales SIIGO_USER/SIIGO_PASS disponibles.');
-        }
-      } else {
-        console.log('¡Sesion valida y activa! Acceso concedido en:', page.url());
-      }
+      // Esperar estabilizacion del SPA de Siigo
+      await page.waitForTimeout(6000);
+      console.log('¡Sesion autenticada confirmada! URL actual:', page.url());
     } else {
       console.log('1. No hay sesion guardada. Iniciando login tradicional...');
       if (!user || !pass) {
@@ -104,7 +100,7 @@ async function ejecutarLogin(page, user, pass) {
       await page.waitForTimeout(6000);
     }
 
-    // Identificar el host actual de la empresa (siigonube.siigo.com o siigonube2.siigo.com)
+    // Identificar el host/cluster actual asignado a la empresa (ej: siigonube2.siigo.com)
     const currentOrigin = new URL(page.url()).origin;
     const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
     console.log('3. Navegando al reporte contable en:', reportUrl);
@@ -112,24 +108,31 @@ async function ejecutarLogin(page, user, pass) {
     
     console.log('4. Esperando carga de la vista del reporte...');
     await page.waitForTimeout(8000);
-    console.log('URL actual del reporte:', page.url());
+    console.log('URL actual tras navegar al reporte:', page.url());
+
+    // Si la URL cambio a root o redirigio, forzar navegacion interna por hash
+    if (!page.url().includes('reports-excel/1979')) {
+      console.log('Forzando navegacion hash interna a #/reports-excel/1979...');
+      await page.evaluate(() => { window.location.hash = '#/reports-excel/1979'; });
+      await page.waitForTimeout(6000);
+    }
 
     // Click en Generar reporte
-    console.log('8. Buscando boton Generar reporte...');
+    console.log('5. Buscando boton Generar reporte...');
     const genButton = page.locator('button:has-text("Generar reporte")').first();
     await genButton.waitFor({ state: 'visible', timeout: 35000 });
     console.log('Pulsando boton Generar reporte...');
     await genButton.click();
     await page.waitForTimeout(3000);
 
-    // Ver si se desplegaron opciones (Excel / TXT o modal)
+    // Opciones tras click
     const optionsAfterClick = await page.evaluate(() => {
       const elements = Array.from(document.querySelectorAll('button, a, li, span, div[role="menuitem"], div[role="option"]'));
       return elements
         .map(el => ({ tag: el.tagName.toLowerCase(), text: (el.innerText || '').trim() }))
         .filter(el => /excel|txt|descargar|generar/i.test(el.text));
     });
-    console.log('Opciones detectadas tras pulsar Generar reporte:', JSON.stringify(optionsAfterClick, null, 2));
+    console.log('Opciones detectadas:', JSON.stringify(optionsAfterClick, null, 2));
 
     // Si hay opcion Excel, hacerle click
     const excelOption = page.locator('button, a, li, span, div[role="menuitem"]').filter({ hasText: /^Excel$/i }).first();
@@ -146,8 +149,8 @@ async function ejecutarLogin(page, user, pass) {
       }
     }
 
-    // Esperar hasta 60s si se detecta descarga o cambio en pantalla
-    console.log('9. Esperando generacion/descarga del archivo...');
+    // Esperar descarga
+    console.log('6. Esperando generacion/descarga del archivo...');
     for (let i = 0; i < 30; i++) {
       if (downloadedFilePath && fs.existsSync(downloadedFilePath)) {
         console.log('¡Archivo descargado exitosamente!', downloadedFilePath);
@@ -162,11 +165,11 @@ async function ejecutarLogin(page, user, pass) {
       const files = fs.readdirSync(outputDir);
       console.log('Archivos en carpeta reportes:', files);
       if (files.some(f => f.endsWith('.xlsx') || f.endsWith('.zip') || f.endsWith('.csv'))) {
-        console.log('10. Reporte generado y verificado.');
+        console.log('7. Reporte generado y verificado.');
         await browser.close();
 
-        // 11. Procesar Excel y actualizar aplicativo interactivo (index.html)
-        console.log('11. Procesando Excel y actualizando index.html...');
+        // Procesar Excel y actualizar aplicativo interactivo (index.html)
+        console.log('8. Procesando Excel y actualizando index.html...');
         try {
           const { execSync } = require('child_process');
           execSync('node generar_dashboard.js', { stdio: 'inherit' });
@@ -182,7 +185,6 @@ async function ejecutarLogin(page, user, pass) {
       }
     }
 
-    // Si no descargo, tomar captura y volcar alertas/toasts
     console.log('Texto visible en la pagina tras la solicitud:');
     const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 1500));
     console.log(bodyText);
