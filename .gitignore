@@ -1,0 +1,6 @@
+node_modules/
+siigo_session.json
+auth.json
+*.png
+*.zip
+.env
