@@ -73,8 +73,11 @@ async function ejecutarLogin(page, user, pass) {
 
   try {
     if (hasStoredSession) {
-      console.log('1. Accediendo con la sesion autenticada guardada...');
-      await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      console.log('1. Accediendo a Siigo con la sesion autenticada guardada...');
+      await page.goto('https://siigonube.siigo.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      
+      console.log('2. Esperando consolidacion del entorno y redirecciones OAuth...');
+      await page.waitForURL(url => !url.href.includes('openid-callback') && !url.href.includes('oauth2'), { timeout: 60000 });
       await page.waitForTimeout(6000);
 
       // Si nos redirigio a login, la sesion expiro
@@ -83,14 +86,12 @@ async function ejecutarLogin(page, user, pass) {
         if (user && pass) {
           console.log('Intentando re-autenticacion tradicional...');
           await ejecutarLogin(page, user, pass);
-          console.log('Navegando al reporte tras login...');
-          await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
           await page.waitForTimeout(6000);
         } else {
           throw new Error('La sesion en SIIGO_STORAGE_STATE expiro y no hay credenciales SIIGO_USER/SIIGO_PASS disponibles.');
         }
       } else {
-        console.log('Sesion valida. Acceso directo concedido.');
+        console.log('¡Sesion valida y activa! Acceso concedido en:', page.url());
       }
     } else {
       console.log('1. No hay sesion guardada. Iniciando login tradicional...');
@@ -101,17 +102,22 @@ async function ejecutarLogin(page, user, pass) {
       await ejecutarLogin(page, user, pass);
       console.log('Esperando carga del entorno inicial...');
       await page.waitForTimeout(6000);
-      console.log('Navegando al reporte: Movimiento auxiliar de tercero por cuenta contable en Excel...');
-      await page.goto('https://siigonube.siigo.com/#/reports-excel/1979', { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(6000);
     }
 
+    // Identificar el host actual de la empresa (siigonube.siigo.com o siigonube2.siigo.com)
+    const currentOrigin = new URL(page.url()).origin;
+    const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
+    console.log('3. Navegando al reporte contable en:', reportUrl);
+    await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    
+    console.log('4. Esperando carga de la vista del reporte...');
+    await page.waitForTimeout(8000);
     console.log('URL actual del reporte:', page.url());
 
     // Click en Generar reporte
     console.log('8. Buscando boton Generar reporte...');
     const genButton = page.locator('button:has-text("Generar reporte")').first();
-    await genButton.waitFor({ state: 'visible', timeout: 20000 });
+    await genButton.waitFor({ state: 'visible', timeout: 35000 });
     console.log('Pulsando boton Generar reporte...');
     await genButton.click();
     await page.waitForTimeout(3000);
