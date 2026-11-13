@@ -10,6 +10,7 @@ echo.
 if %ERRORLEVEL% equ 0 (
     echo [OK] Proceso terminado exitosamente.
 ) else (
-    echo [ERROR] Ocurrio un fallo durante la descarga.
+    echo [ERROR] Ocurrio un fallo durante la ejecucion.
 )
-timeout /t 8
+echo.
+pause
