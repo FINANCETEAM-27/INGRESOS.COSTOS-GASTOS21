@@ -6,47 +6,6 @@ const { execSync } = require('child_process');
 const isCI = !!process.env.CI;
 const sessionPath = path.join(__dirname, 'siigo_session.json');
 
-async function ejecutarLoginInteractivo() {
-  console.log('\n======================================================');
-  console.log('⚠️ SE REQUIERE VERIFICACIÓN / RENOVACIÓN DE SESIÓN EN SIIGO');
-  console.log('👉 Se abrirá la ventana de Siigo en tu pantalla.');
-  console.log('👉 Por favor inicia sesión e ingresa el código SMS.');
-  console.log('======================================================\n');
-
-  const browser = await chromium.launch({
-    headless: false,
-    args: ['--start-maximized']
-  });
-  const context = await browser.newContext({
-    viewport: null,
-    acceptDownloads: true
-  });
-  const page = await context.newPage();
-
-  configurarInterceptores(page);
-
-  await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  console.log('Esperando a que completes la autenticación y el código SMS en pantalla...');
-  await page.waitForFunction(() => {
-    const href = window.location.href;
-    return !href.includes('account.siigo.com') &&
-           !href.includes('openid-callback') &&
-           !href.includes('oauth2') &&
-           !href.includes('#/login') &&
-           (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
-  }, { timeout: 300000 }); // Hasta 5 minutos para ingresar credenciales y SMS
-
-  console.log('¡Autenticación con SMS completada exitosamente!');
-  await page.waitForTimeout(5000);
-
-  // Guardar la nueva sesión para que los próximos días corra en segundo plano
-  await context.storageState({ path: sessionPath });
-  console.log('✅ Sesión actualizada y guardada en siigo_session.json.');
-
-  return { browser, context, page };
-}
-
 let downloadedFilePath = null;
 
 function configurarInterceptores(page) {
@@ -70,12 +29,52 @@ function configurarInterceptores(page) {
   });
 }
 
+async function ejecutarLoginInteractivo() {
+  console.log('\n======================================================');
+  console.log('⚠️ SE REQUIERE VERIFICACIÓN / RENOVACIÓN DE SESIÓN EN SIIGO');
+  console.log('👉 Abriendo la ventana del navegador en tu pantalla...');
+  console.log('👉 Por favor inicia sesión e ingresa el código SMS.');
+  console.log('======================================================\n');
+
+  const browser = await chromium.launch({
+    headless: false
+  });
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    acceptDownloads: true
+  });
+  const page = await context.newPage();
+
+  configurarInterceptores(page);
+
+  console.log('Cargando Siigo Nube...');
+  await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  console.log('Esperando a que completes la autenticación y el código SMS en la ventana...');
+  await page.waitForFunction(() => {
+    const href = window.location.href;
+    return !href.includes('account.siigo.com') &&
+           !href.includes('openid-callback') &&
+           !href.includes('oauth2') &&
+           !href.includes('#/login') &&
+           (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
+  }, { timeout: 300000 }); // 5 minutos
+
+  console.log('¡Autenticación con SMS completada exitosamente!');
+  await page.waitForTimeout(5000);
+
+  // Guardar la nueva sesión
+  await context.storageState({ path: sessionPath });
+  console.log('✅ Sesión actualizada y guardada en siigo_session.json.');
+
+  return { browser, context, page };
+}
+
 (async () => {
   let browser = null;
   let context = null;
   let page = null;
 
-  // 1. Preparar contexto con sesión previa si existe
   const contextOptions = {
     acceptDownloads: true,
     viewport: { width: 1366, height: 768 }
@@ -106,62 +105,58 @@ function configurarInterceptores(page) {
     }
   }
 
-  try {
-    let sessionValida = false;
+  let sessionValida = false;
 
-    if (hasStoredSession) {
+  // Paso 1: Intento en segundo plano si hay sesión previa
+  if (hasStoredSession) {
+    try {
       console.log('1. Intentando acceso en segundo plano con la sesión guardada...');
       browser = await chromium.launch({ headless: true });
       context = await browser.newContext(contextOptions);
       page = await context.newPage();
       configurarInterceptores(page);
 
-      await page.goto('https://siigonube.siigo.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.goto('https://siigonube.siigo.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
       console.log('2. Verificando estado de la sesión...');
+      await page.waitForTimeout(6000);
 
-      try {
-        await page.waitForFunction(() => {
-          const href = window.location.href;
-          return (!href.includes('account.siigo.com') && 
-                  !href.includes('openid-callback') && 
-                  !href.includes('oauth2') &&
-                  !href.includes('#/login') &&
-                  (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'))) ||
-                  href.includes('account.siigo.com') ||
-                  href.includes('#/login');
-        }, { timeout: 30000 });
+      const currentUrl = page.url();
+      console.log('URL actual tras comprobación:', currentUrl);
 
-        await page.waitForTimeout(4000);
-        const currentUrl = page.url();
-        console.log('URL actual tras comprobación:', currentUrl);
-
-        if (!currentUrl.includes('account.siigo.com') && !currentUrl.includes('#/login')) {
-          sessionValida = true;
-          console.log('✅ Sesión válida y activa. Continuando en segundo plano.');
-        } else {
-          console.log('⚠️ La sesión guardada ha expirado o Siigo solicita login/SMS.');
-        }
-      } catch (errWait) {
-        console.log('Timeout verificando sesión guardada:', errWait.message);
-      }
-    }
-
-    // Si la sesión no es válida y estamos en entorno local, abrir navegador interactivo
-    if (!sessionValida) {
-      if (!isCI) {
-        if (browser) {
-          try { await browser.close(); } catch (_) {}
-        }
-        const interactivo = await ejecutarLoginInteractivo();
-        browser = interactivo.browser;
-        context = interactivo.context;
-        page = interactivo.page;
+      if (!currentUrl.includes('account.siigo.com') && !currentUrl.includes('#/login') && !currentUrl.includes('openid-callback')) {
+        sessionValida = true;
+        console.log('✅ Sesión válida y activa. Continuando en segundo plano.');
       } else {
-        console.error('Error: Sesión expirada en entorno desatendido CI (GitHub Actions).');
-        process.exit(1);
+        console.log('⚠️ La sesión guardada ha expirado o Siigo solicita login/SMS.');
+      }
+    } catch (errBackground) {
+      console.log('No se pudo validar sesión en segundo plano (' + errBackground.message + ').');
+      sessionValida = false;
+    } finally {
+      if (!sessionValida && browser) {
+        try { await browser.close(); } catch (_) {}
+        browser = null;
+        context = null;
+        page = null;
       }
     }
+  }
 
+  // Paso 2: Si no es válida y es local, abrir navegador interactivo en pantalla
+  if (!sessionValida) {
+    if (!isCI) {
+      console.log('Iniciando modo interactivo en pantalla para renovar sesión...');
+      const interactivo = await ejecutarLoginInteractivo();
+      browser = interactivo.browser;
+      context = interactivo.context;
+      page = interactivo.page;
+    } else {
+      console.error('Error: Sesión expirada en entorno desatendido CI (GitHub Actions).');
+      process.exit(1);
+    }
+  }
+
+  try {
     // 3. Navegar al reporte en el cluster asignado
     const currentOrigin = new URL(page.url()).origin;
     const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
@@ -245,7 +240,6 @@ function configurarInterceptores(page) {
     } catch (_) {}
     process.exit(1);
   } finally {
-    // Si estamos en CI, limpiar archivo temporal de secretos
     if (isCI && fs.existsSync(sessionPath)) {
       try { fs.unlinkSync(sessionPath); } catch (_) {}
     }
