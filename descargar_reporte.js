@@ -104,9 +104,16 @@ async function ejecutarLoginInteractivo() {
   console.log('👉 Por favor inicia sesión e ingresa el código SMS si lo solicita.');
   console.log('======================================================\n');
 
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({ headless: false , args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-blink-features=AutomationControlled'
+    ] });
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
     acceptDownloads: true
   });
       const page = await context.newPage();
@@ -186,7 +193,13 @@ async function ejecutarLoginInteractivo() {
   if (hasStoredSession) {
     try {
       console.log('1. Probando acceso con la sesión guardada previa...');
-      browser = await chromium.launch({ headless: true });
+      browser = await chromium.launch({ headless: true , args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-blink-features=AutomationControlled'
+    ] });
       context = await browser.newContext(contextOptions);
       page = await context.newPage();
       configurarInterceptores(page);
@@ -220,7 +233,13 @@ async function ejecutarLoginInteractivo() {
   if (!sessionValida) {
     if (user && pass) {
       console.log('2. Iniciando autenticación automática con credenciales configuradas...');
-      browser = await chromium.launch({ headless: isCI });
+      browser = await chromium.launch({ headless: isCI , args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-blink-features=AutomationControlled'
+    ] });
       context = await browser.newContext({
         acceptDownloads: true,
         viewport: { width: 1440, height: 900 }
