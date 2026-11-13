@@ -47,6 +47,22 @@ function configurarInterceptores(page) {
     if (disposition.includes('attachment') || url.includes('.xlsx') || url.includes('export') || url.includes('download')) {
       console.log('Respuesta sospechosa de archivo:', url, 'Disposition:', disposition);
     }
+    if (response.status() >= 400 && url.includes('siigo')) {
+      try {
+        console.log('[API ERROR ' + response.status() + ']: ' + url);
+      } catch (_) {}
+    }
+  });
+
+  page.on('console', msg => {
+    const t = msg.text();
+    if (msg.type() === 'error' || /catastrophic|fail|error|cannot read|undefined|unauthorized|permission|denied/i.test(t)) {
+      console.log('[BROWSER CONSOLE ' + msg.type() + ']: ' + t.slice(0, 350));
+    }
+  });
+
+  page.on('pageerror', err => {
+    console.log('[BROWSER UNCAUGHT]: ' + (err.stack || err.message).slice(0, 500));
   });
 }
 
