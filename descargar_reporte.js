@@ -6,6 +6,28 @@ const { execSync } = require('child_process');
 const isCI = !!process.env.CI;
 const sessionPath = path.join(__dirname, 'siigo_session.json');
 
+// Cargar variables de entorno desde .env local si existe
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  try {
+    const lines = fs.readFileSync(envPath, 'utf8').split('
+');
+    for (const line of lines) {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (match) {
+        const key = match[1];
+        let val = (match[2] || '').trim().replace(/^['"](.*)['"]$/, '');
+        if (!process.env[key]) {
+          process.env[key] = val;
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+const user = process.env.SIIGO_USER;
+const pass = process.env.SIIGO_PASS;
+
 let downloadedFilePath = null;
 
 function configurarInterceptores(page) {
@@ -29,28 +51,24 @@ function configurarInterceptores(page) {
   });
 }
 
-async function ejecutarLoginInteractivo() {
-  console.log('\n======================================================');
-  console.log('⚠️ SE REQUIERE VERIFICACIÓN / RENOVACIÓN DE SESIÓN EN SIIGO');
-  console.log('👉 Abriendo la ventana del navegador en tu pantalla...');
-  console.log('👉 Por favor inicia sesión e ingresa el código SMS.');
-  console.log('======================================================\n');
-
-  const browser = await chromium.launch({
-    headless: false
-  });
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    acceptDownloads: true
-  });
-  const page = await context.newPage();
-
-  configurarInterceptores(page);
-
-  console.log('Cargando Siigo Nube...');
+async function ejecutarLoginAutomatico(page, user, pass) {
+  console.log('Abriendo pantalla de inicio de sesión de Siigo...');
   await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-  console.log('Esperando a que completes la autenticación y el código SMS en la ventana (tienes hasta 10 minutos)...');
+  console.log();
+  const userInput = page.locator('#siigoSignInName');
+  await userInput.waitFor({ state: 'attached', timeout: 30000 });
+  await userInput.fill(user);
+
+  const passInput = page.locator('#siigoPassword');
+  await passInput.fill(pass);
+
+  console.log('Enviando formulario de acceso...');
+  const nextBtn = page.locator('#siigoNext');
+  await nextBtn.click();
+
+  console.log('Esperando autenticación y redirección...');
+  // Si el usuario no pide SMS, redirige directamente al cluster
   await page.waitForURL(url => {
     const href = url.href;
     return !href.includes('account.siigo.com') &&
@@ -58,14 +76,47 @@ async function ejecutarLoginInteractivo() {
            !href.includes('oauth2') &&
            !href.includes('#/login') &&
            (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
-  }, { timeout: 600000 }); // 10 minutos
+  }, { timeout: isCI ? 60000 : 300000 });
 
-  console.log('¡Autenticación con SMS completada exitosamente!');
+  console.log('¡Inicio de sesión exitoso!');
+  await page.waitForTimeout(5000);
+}
+
+async function ejecutarLoginInteractivo() {
+  console.log('
+======================================================');
+  console.log('⚠️ SE REQUIERE VERIFICACIÓN / RENOVACIÓN DE SESIÓN EN SIIGO');
+  console.log('👉 Abriendo la ventana del navegador en tu pantalla...');
+  console.log('👉 Por favor inicia sesión e ingresa el código SMS si lo solicita.');
+  console.log('======================================================
+');
+
+  const browser = await chromium.launch({ headless: false });
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    acceptDownloads: true
+  });
+  const page = await context.newPage();
+  configurarInterceptores(page);
+
+  console.log('Cargando Siigo Nube...');
+  await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  console.log('Esperando a que completes la autenticación en la ventana (tienes hasta 10 minutos)...');
+  await page.waitForURL(url => {
+    const href = url.href;
+    return !href.includes('account.siigo.com') &&
+           !href.includes('openid-callback') &&
+           !href.includes('oauth2') &&
+           !href.includes('#/login') &&
+           (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
+  }, { timeout: 600000 });
+
+  console.log('¡Autenticación completada exitosamente!');
   await page.waitForTimeout(5000);
 
-  // Guardar la nueva sesión
   await context.storageState({ path: sessionPath });
-  console.log('✅ Sesión actualizada y guardada en siigo_session.json.');
+  console.log('✓ Sesión actualizada y guardada en siigo_session.json.');
 
   return { browser, context, page };
 }
@@ -107,30 +158,29 @@ async function ejecutarLoginInteractivo() {
 
   let sessionValida = false;
 
-  // Paso 1: Intento en segundo plano si hay sesión previa
+  // Paso 1: Intento en segundo plano con sesión previa si existe
   if (hasStoredSession) {
     try {
-      console.log('1. Intentando acceso en segundo plano con la sesión guardada...');
+      console.log('1. Probando acceso con la sesión guardada previa...');
       browser = await chromium.launch({ headless: true });
       context = await browser.newContext(contextOptions);
       page = await context.newPage();
       configurarInterceptores(page);
 
       await page.goto('https://siigonube.siigo.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
-      console.log('2. Verificando estado de la sesión...');
       await page.waitForTimeout(6000);
 
       const currentUrl = page.url();
-      console.log('URL actual tras comprobación:', currentUrl);
+      console.log('URL actual comprobada:', currentUrl);
 
       if (!currentUrl.includes('account.siigo.com') && !currentUrl.includes('#/login') && !currentUrl.includes('openid-callback')) {
         sessionValida = true;
-        console.log('✅ Sesión válida y activa. Continuando en segundo plano.');
+        console.log('✓ Sesión previa aún válida y activa.');
       } else {
-        console.log('⚠️ La sesión guardada ha expirado o Siigo solicita login/SMS.');
+        console.log('⚠️ La sesión previa expiró o Siigo solicita login.');
       }
     } catch (errBackground) {
-      console.log('No se pudo validar sesión en segundo plano (' + errBackground.message + ').');
+      console.log('No se pudo reusar la sesión previa:', errBackground.message);
       sessionValida = false;
     } finally {
       if (!sessionValida && browser) {
@@ -142,16 +192,35 @@ async function ejecutarLoginInteractivo() {
     }
   }
 
-  // Paso 2: Si no es válida y es local, abrir navegador interactivo en pantalla
+  // Paso 2: Si no hay sesión válida, autenticar
   if (!sessionValida) {
-    if (!isCI) {
-      console.log('Iniciando modo interactivo en pantalla para renovar sesión...');
+    if (user && pass) {
+      console.log('2. Iniciando autenticación automática con credenciales configuradas...');
+      browser = await chromium.launch({ headless: isCI });
+      context = await browser.newContext({
+        acceptDownloads: true,
+        viewport: { width: 1366, height: 768 }
+      });
+      page = await context.newPage();
+      configurarInterceptores(page);
+
+      await ejecutarLoginAutomatico(page, user, pass);
+
+      // Guardar la sesión generada para futuras ejecuciones
+      try {
+        await context.storageState({ path: sessionPath });
+        console.log('✓ Nueva sesión guardada en siigo_session.json.');
+      } catch (errStore) {
+        console.warn('Aviso guardando storageState:', errStore.message);
+      }
+    } else if (!isCI) {
+      console.log('No hay credenciales en variables de entorno. Iniciando modo interactivo...');
       const interactivo = await ejecutarLoginInteractivo();
       browser = interactivo.browser;
       context = interactivo.context;
       page = interactivo.page;
     } else {
-      console.error('Error: Sesión expirada en entorno desatendido CI (GitHub Actions).');
+      console.error('Error: Se requiere autenticación pero no se proporcionaron SIIGO_USER / SIIGO_PASS en CI.');
       process.exit(1);
     }
   }
@@ -159,7 +228,7 @@ async function ejecutarLoginInteractivo() {
   try {
     // 3. Navegar al reporte en el cluster asignado
     const currentOrigin = new URL(page.url()).origin;
-    const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
+    const reportUrl = ;
     console.log('3. Navegando al reporte contable en:', reportUrl);
     await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
@@ -218,14 +287,16 @@ async function ejecutarLoginInteractivo() {
         console.log('8. Procesando Excel y actualizando index.html...');
         try {
           execSync('node generar_dashboard.js', { stdio: 'inherit' });
-          console.log('✅ Dashboard index.html actualizado con éxito.');
+          console.log('✓ Dashboard index.html actualizado con éxito.');
         } catch (genErr) {
           console.error('Advertencia al generar dashboard:', genErr.message || genErr);
         }
 
-        console.log('\n======================================================');
+        console.log('
+======================================================');
         console.log('🎉 ¡ACTUALIZACIÓN COMPLETADA CON ÉXITO!');
-        console.log('======================================================\n');
+        console.log('======================================================
+');
         process.exit(0);
       }
     }
