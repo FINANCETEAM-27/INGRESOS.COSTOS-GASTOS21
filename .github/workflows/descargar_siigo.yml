@@ -1,17 +1,14 @@
-name: Descarga Nocturna Reporte Siigo
+name: Descarga Reporte Siigo (Manual)
 
 on:
-  schedule:
-    # 11:00 PM Colombia (UTC-5) = 04:00 AM UTC del día siguiente
-    - cron: '0 4 * * *'
-  workflow_dispatch: # Permite ejecutarlo manualmente en cualquier momento
+  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub si se desea
 
 jobs:
   descargar:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write # Permite al bot hacer commit del Excel en el repo
+      contents: write
 
     steps:
       - name: Descargar código del repositorio
@@ -29,6 +26,7 @@ jobs:
 
       - name: Ejecutar bot de descarga
         env:
+          CI: true
           SIIGO_USER: ${{ secrets.SIIGO_USER }}
           SIIGO_PASS: ${{ secrets.SIIGO_PASS }}
           SIIGO_STORAGE_STATE: ${{ secrets.SIIGO_STORAGE_STATE }}
