@@ -337,17 +337,37 @@ async function ejecutarLoginInteractivo() {
       }
     }
 
+    // Registrar archivos previos en carpeta reportes
+    const outputDir = path.join(__dirname, 'reportes');
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    const initialFiles = new Set(fs.readdirSync(outputDir));
+    console.log('Archivos existentes antes de la descarga:', Array.from(initialFiles));
+
+    // Esperar a que DevExpress / Single-SPA / iframes terminen de montar la vista
+    console.log('Esperando a que la vista y componentes terminen de cargar (15s)...');
+    await page.waitForTimeout(15000);
+
+    const frames = page.frames();
+    console.log(`Frames detectados (${frames.length}):`);
+    frames.forEach((f, idx) => console.log(`  Frame [${idx}]: name="${f.name()}" url="${f.url()}"`));
+
     // 5. Pulsar botón con el logo / icono de Excel
-    console.log('5. Buscando botón de exportación a Excel...');
+    console.log('5. Buscando botón de exportación a Excel en todos los frames...');
     const excelSelectors = [
       'button:has([class*="excel" i])',
       'a:has([class*="excel" i])',
+      'div:has([class*="excel" i])',
       'button:has(img[src*="excel" i])',
       'a:has(img[src*="excel" i])',
       '[title*="excel" i]',
       '[aria-label*="excel" i]',
       'button:has-text("Excel")',
       'a:has-text("Excel")',
+      '.dx-datagrid-export-button',
+      '.dx-icon-export-to-excel',
+      '.dx-icon-exportexcel',
+      '[class*="export-to-excel" i]',
+      '[class*="exportexcel" i]',
       'button:has(.fa-file-excel)',
       'i[class*="excel" i]',
       '.icon-excel',
@@ -355,73 +375,101 @@ async function ejecutarLoginInteractivo() {
     ];
 
     let clickedExcel = false;
-    for (const sel of excelSelectors) {
-      const loc = page.locator(sel).first();
-      if (await loc.count() > 0 && await loc.isVisible()) {
-        console.log(`Pulsando botón de Excel con selector: ${sel}...`);
-        await loc.click();
-        clickedExcel = true;
-        await page.waitForTimeout(3000);
-        break;
+    const contexts = [page, ...frames];
+    for (const ctx of contexts) {
+      if (clickedExcel) break;
+      for (const sel of excelSelectors) {
+        try {
+          const loc = ctx.locator(sel).first();
+          if (await loc.count() > 0 && await loc.isVisible()) {
+            console.log(`Pulsando botón de Excel con selector: ${sel}...`);
+            await loc.click();
+            clickedExcel = true;
+            await page.waitForTimeout(3000);
+
+            // Si se abre un menú desplegable de exportación
+            const menuOptions = ctx.locator('.dx-menu-item, .dropdown-item, [role="menuitem"], span:has-text("Excel")');
+            if (await menuOptions.count() > 0 && await menuOptions.first().isVisible()) {
+              console.log('Pulsando opción en menú desplegable de exportación...');
+              await menuOptions.first().click();
+              await page.waitForTimeout(2000);
+            }
+            break;
+          }
+        } catch (_) {}
       }
     }
 
     if (!clickedExcel) {
-      console.log('Intentando clic en icono de Excel por DOM directo...');
-      clickedExcel = await page.evaluate(() => {
-        const all = Array.from(document.querySelectorAll('button, a, i, span, div, img'));
-        const el = all.find(e => {
-          const title = (e.getAttribute('title') || '').toLowerCase();
-          const aria = (e.getAttribute('aria-label') || '').toLowerCase();
-          const cls = (e.className || '').toString().toLowerCase();
-          const src = (e.getAttribute('src') || '').toLowerCase();
-          const txt = (e.innerText || '').trim().toLowerCase();
-          return title.includes('excel') || aria.includes('excel') || cls.includes('excel') || src.includes('excel') || txt === 'excel';
-        });
-        if (el) {
-          el.click();
-          return true;
-        }
-        return false;
-      });
-      console.log('¿Clic en Excel por DOM?:', clickedExcel);
-      await page.waitForTimeout(3000);
+      console.log('Intentando clic en icono de Excel por DOM directo en todos los frames...');
+      for (const ctx of contexts) {
+        if (clickedExcel) break;
+        try {
+          clickedExcel = await ctx.evaluate(() => {
+            const all = Array.from(document.querySelectorAll('button, a, i, span, div, img'));
+            const el = all.find(e => {
+              const title = (e.getAttribute('title') || '').toLowerCase();
+              const aria = (e.getAttribute('aria-label') || '').toLowerCase();
+              const cls = (e.className || '').toString().toLowerCase();
+              const src = (e.getAttribute('src') || '').toLowerCase();
+              const txt = (e.innerText || '').trim().toLowerCase();
+              return title.includes('excel') || aria.includes('excel') || cls.includes('excel') || src.includes('excel') || txt === 'excel';
+            });
+            if (el) {
+              el.click();
+              return true;
+            }
+            return false;
+          });
+          if (clickedExcel) {
+            console.log('¡Clic en Excel exitoso por DOM!');
+            await page.waitForTimeout(3000);
+          }
+        } catch (_) {}
+      }
     }
 
-        // 6. Esperar descarga
+    // 6. Esperar descarga del archivo nuevo
     console.log('6. Esperando generación y descarga del archivo...');
-    for (let i = 0; i < 35; i++) {
+    let nuevoArchivoDescargado = null;
+    for (let i = 0; i < 40; i++) {
       if (downloadedFilePath && fs.existsSync(downloadedFilePath)) {
-        console.log('¡Archivo descargado exitosamente!', downloadedFilePath);
+        nuevoArchivoDescargado = downloadedFilePath;
+        console.log('¡Archivo capturado por evento de descarga!', nuevoArchivoDescargado);
+        break;
+      }
+      const currentFiles = fs.readdirSync(outputDir);
+      const newFile = currentFiles.find(f => !initialFiles.has(f) && (f.endsWith('.xlsx') || f.endsWith('.zip') || f.endsWith('.csv')));
+      if (newFile) {
+        nuevoArchivoDescargado = path.join(outputDir, newFile);
+        console.log('¡Nuevo archivo detectado en carpeta reportes!', nuevoArchivoDescargado);
         break;
       }
       await page.waitForTimeout(2000);
     }
 
-    // 7. Procesar y actualizar dashboard local
-    const outputDir = path.join(__dirname, 'reportes');
-    if (fs.existsSync(outputDir)) {
-      const files = fs.readdirSync(outputDir);
-      console.log('Archivos en carpeta reportes:', files);
-      if (files.some(f => f.endsWith('.xlsx') || f.endsWith('.zip') || f.endsWith('.csv'))) {
-        console.log('7. Reporte generado y verificado.');
-        try { await browser.close(); } catch (_) {}
-
-        console.log('8. Procesando Excel y actualizando index.html...');
-        try {
-          execSync('node generar_dashboard.js', { stdio: 'inherit' });
-          console.log('✓ Dashboard index.html actualizado con éxito.');
-        } catch (genErr) {
-          console.error('Advertencia al generar dashboard:', genErr.message || genErr);
-        }
-
-        console.log('\n======================================================');
-        console.log('🎉 ¡ACTUALIZACIÓN COMPLETADA CON ÉXITO!');
-        console.log('======================================================\n');
-        process.exit(0);
-      }
+    if (!nuevoArchivoDescargado) {
+      console.warn('Tomando captura de pantalla para diagnóstico...');
+      await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
+      throw new Error('No se detectó la descarga de un nuevo archivo Excel desde Siigo.');
     }
 
+    // 7. Procesar y actualizar dashboard local
+    console.log('7. Reporte generado y verificado:', nuevoArchivoDescargado);
+    try { await browser.close(); } catch (_) {}
+
+    console.log('8. Procesando Excel y actualizando index.html...');
+    try {
+      execSync('node generar_dashboard.js', { stdio: 'inherit' });
+      console.log('✓ Dashboard index.html actualizado con éxito.');
+    } catch (genErr) {
+      console.error('Advertencia al generar dashboard:', genErr.message || genErr);
+    }
+
+    console.log('\n======================================================');
+    console.log('🎉 ¡ACTUALIZACIÓN COMPLETADA CON ÉXITO!');
+    console.log('======================================================\n');
+    process.exit(0);
     await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
     throw new Error('No se detectó el archivo Excel descargado.');
 
