@@ -10,13 +10,12 @@ const sessionPath = path.join(__dirname, 'siigo_session.json');
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
   try {
-    const lines = fs.readFileSync(envPath, 'utf8').split('
-');
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
     for (const line of lines) {
       const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
       if (match) {
         const key = match[1];
-        let val = (match[2] || '').trim().replace(/^['"](.*)['"]$/, '');
+        let val = (match[2] || '').trim().replace(/^['"](.*)['"]$/, '$1');
         if (!process.env[key]) {
           process.env[key] = val;
         }
@@ -55,7 +54,7 @@ async function ejecutarLoginAutomatico(page, user, pass) {
   console.log('Abriendo pantalla de inicio de sesión de Siigo...');
   await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-  console.log();
+  console.log('Ingresando credenciales para: ' + user + '...');
   const userInput = page.locator('#siigoSignInName');
   await userInput.waitFor({ state: 'attached', timeout: 30000 });
   await userInput.fill(user);
@@ -83,13 +82,11 @@ async function ejecutarLoginAutomatico(page, user, pass) {
 }
 
 async function ejecutarLoginInteractivo() {
-  console.log('
-======================================================');
+  console.log('\n======================================================');
   console.log('⚠️ SE REQUIERE VERIFICACIÓN / RENOVACIÓN DE SESIÓN EN SIIGO');
   console.log('👉 Abriendo la ventana del navegador en tu pantalla...');
   console.log('👉 Por favor inicia sesión e ingresa el código SMS si lo solicita.');
-  console.log('======================================================
-');
+  console.log('======================================================\n');
 
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
@@ -228,7 +225,7 @@ async function ejecutarLoginInteractivo() {
   try {
     // 3. Navegar al reporte en el cluster asignado
     const currentOrigin = new URL(page.url()).origin;
-    const reportUrl = ;
+    const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
     console.log('3. Navegando al reporte contable en:', reportUrl);
     await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
@@ -292,11 +289,9 @@ async function ejecutarLoginInteractivo() {
           console.error('Advertencia al generar dashboard:', genErr.message || genErr);
         }
 
-        console.log('
-======================================================');
+        console.log('\n======================================================');
         console.log('🎉 ¡ACTUALIZACIÓN COMPLETADA CON ÉXITO!');
-        console.log('======================================================
-');
+        console.log('======================================================\n');
         process.exit(0);
       }
     }
