@@ -90,10 +90,21 @@ async function ejecutarLoginInteractivo() {
 
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
+    viewport: { width: 1440, height: 900 },
     acceptDownloads: true
   });
-  const page = await context.newPage();
+      const page = await context.newPage();
+
+    page.on('console', msg => {
+      const t = msg.text();
+      if (msg.type() === 'error' || /catastrophic|fail|error|cannot read|undefined|unauthorized/i.test(t)) {
+        console.log('[BROWSER CONSOLE ' + msg.type() + ']: ' + t.slice(0, 350));
+      }
+    });
+
+    page.on('pageerror', err => {
+      console.log('[BROWSER PAGEERROR]: ' + (err.stack || err.message).slice(0, 500));
+    });
   configurarInterceptores(page);
 
   console.log('Cargando Siigo Nube...');
@@ -125,7 +136,7 @@ async function ejecutarLoginInteractivo() {
 
   const contextOptions = {
     acceptDownloads: true,
-    viewport: { width: 1366, height: 768 }
+    viewport: { width: 1440, height: 900 }
   };
 
   const storageStateRaw = process.env.SIIGO_STORAGE_STATE;
@@ -196,7 +207,7 @@ async function ejecutarLoginInteractivo() {
       browser = await chromium.launch({ headless: isCI });
       context = await browser.newContext({
         acceptDownloads: true,
-        viewport: { width: 1366, height: 768 }
+        viewport: { width: 1440, height: 900 }
       });
       page = await context.newPage();
       configurarInterceptores(page);
