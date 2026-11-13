@@ -288,15 +288,21 @@ async function ejecutarLoginInteractivo() {
       await page.waitForTimeout(8000);
     }
 
-    // Si no se encontró por búsqueda o no abrió, intentar abrir menú Reportes
-    if (!page.url().includes('reports') && !page.url().includes('1979')) {
-      console.log('Intentando clic en menú Reportes...');
-      await page.evaluate(() => {
-        const reportMenu = Array.from(document.querySelectorAll('a, button, span, div')).find(el => /^Reportes$/i.test((el.innerText || '').trim()));
-        if (reportMenu) reportMenu.click();
+    // Volcar todos los elementos del menú lateral y navegación
+    const navItems = await page.evaluate(() => {
+      const items = [];
+      document.querySelectorAll('nav, aside, ul, li, a, button').forEach(el => {
+        const text = (el.innerText || '').trim();
+        const aria = el.getAttribute('aria-label') || '';
+        const title = el.getAttribute('title') || '';
+        const href = el.getAttribute('href') || '';
+        if (text || aria || title || href) {
+          items.push({ text: text.slice(0, 30), aria, title, href });
+        }
       });
-      await page.waitForTimeout(4000);
-    }
+      return items.filter(i => /report|informe|contab|movim/i.test(i.text) || /report|informe|contab|movim/i.test(i.aria) || /report|informe|contab|movim/i.test(i.title) || /report/i.test(i.href)).slice(0, 20);
+    });
+    console.log('Elementos de navegación relacionados con reportes/contabilidad:', JSON.stringify(navItems));
 
     // Si aún no está en el reporte, intentar navegación directa
     if (!page.url().includes('reports-excel') && !page.url().includes('report')) {
