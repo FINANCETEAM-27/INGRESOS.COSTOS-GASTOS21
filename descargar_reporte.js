@@ -223,43 +223,62 @@ async function ejecutarLoginInteractivo() {
   }
 
   try {
-    // 3. Navegar al reporte en el cluster asignado
-    const currentOrigin = new URL(page.url()).origin;
-    const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
-    console.log('3. Navegando al reporte contable en:', reportUrl);
-    
-    // Esperar a que el dashboard de Siigo termine de montar componentes iniciales
-    await page.waitForTimeout(8000);
+    // 3. Navegar al reporte contable
+    console.log('3. Buscando reporte contable...');
+    await page.waitForTimeout(6000);
 
-    // Navegar directamente a la ruta del reporte
-    console.log('Navegando a ruta con reload completo...');
-    await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(10000);
+    // Intentar abrir el reporte buscando en Siigo Nube
+    console.log('Intentando abrir buscador global o menú...');
+    const searchTrigger = page.locator('input[placeholder*="Buscar opción de menú" i], [aria-label*="Buscar" i], button:has(.fa-search), .fa-search').first();
+    let searchOpened = false;
 
-    console.log('URL actual tras primer intento:', page.url());
-    if (!page.url().includes('reports-excel/1979')) {
-      console.log('Forzando navegación directa por asignación href...');
-      await page.evaluate((target) => { window.location.href = target; }, reportUrl);
-      await page.waitForTimeout(8000);
-      console.log('URL actual tras asignación href:', page.url());
+    if (await searchTrigger.count() > 0 && await searchTrigger.isVisible()) {
+      console.log('Activando buscador...');
+      await searchTrigger.click();
+      await page.waitForTimeout(1500);
+      searchOpened = true;
     }
 
-    // Comprobar si el menú lateral o la barra de búsqueda está presente
-    const pageLinks = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('a, button, div[role="button"], span'))
-        .map(el => (el.innerText || '').trim())
-        .filter(t => t.length > 2 && t.length < 50)
-        .slice(0, 30);
-    });
-    console.log('Elementos visibles principales en la página:', JSON.stringify(pageLinks));
+    const searchInput = page.locator('input[placeholder*="Buscar" i], input[type="search"]:visible, input[type="text"]:visible').first();
+    if (await searchInput.count() > 0 && await searchInput.isVisible()) {
+      console.log('Escribiendo "Movimiento auxiliar" en el buscador...');
+      await searchInput.fill('Movimiento auxiliar');
+      await page.waitForTimeout(3000);
+
+      // Ver opciones arrojadas por la búsqueda
+      const searchOptions = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('li, a, [role="option"], div'))
+          .map(el => (el.innerText || '').trim())
+          .filter(t => /movimiento auxiliar/i.test(t) && t.length < 80);
+      });
+      console.log('Opciones de búsqueda encontradas:', Array.from(new Set(searchOptions)));
+
+      const targetOption = page.locator('li, a, [role="option"]').filter({ hasText: /movimiento auxiliar/i }).first();
+      if (await targetOption.count() > 0 && await targetOption.isVisible()) {
+        console.log('Pulsando opción de reporte encontrada en búsqueda...');
+        await targetOption.click();
+        await page.waitForTimeout(8000);
+      }
+    }
+
+    // Si aún no está en el reporte, intentar navegación directa
+    if (!page.url().includes('reports-excel') && !page.url().includes('report')) {
+      const currentOrigin = new URL(page.url()).origin;
+      const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
+      console.log('Navegando directamente por URL:', reportUrl);
+      await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(8000);
+    }
+
+    console.log('URL actual tras navegación:', page.url());
 
     // 5. Pulsar Generar reporte
     console.log('5. Buscando botón Generar reporte...');
-    const genButton = page.locator('button:has-text("Generar reporte"), a:has-text("Generar reporte")').first();
+    const genButton = page.locator('button:has-text("Generar reporte"), a:has-text("Generar reporte"), button:has-text("Descargar"), button:has-text("Exportar")').first();
     try {
       await genButton.waitFor({ state: 'visible', timeout: 35000 });
     } catch (btnErr) {
-      console.warn('Botón Generar reporte no visible de inmediato. Volcado de texto visible:');
+      console.warn('Botón de reporte no visible de inmediato. Volcado de texto visible:');
       const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 1000));
       console.warn(bodySnippet);
       throw btnErr;
