@@ -1,7 +1,10 @@
-name: Descarga Reporte Siigo (Manual)
+name: Descarga Nocturna Reporte Siigo
 
 on:
-  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub si se desea
+  schedule:
+    # 04:00 UTC = 11:00 PM hora Colombia (UTC-5)
+    - cron: '0 4 * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub cuando se desee
 
 jobs:
   descargar:
