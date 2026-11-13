@@ -50,15 +50,15 @@ async function ejecutarLoginInteractivo() {
   console.log('Cargando Siigo Nube...');
   await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-  console.log('Esperando a que completes la autenticación y el código SMS en la ventana...');
-  await page.waitForFunction(() => {
-    const href = window.location.href;
+  console.log('Esperando a que completes la autenticación y el código SMS en la ventana (tienes hasta 10 minutos)...');
+  await page.waitForURL(url => {
+    const href = url.href;
     return !href.includes('account.siigo.com') &&
            !href.includes('openid-callback') &&
            !href.includes('oauth2') &&
            !href.includes('#/login') &&
            (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
-  }, { timeout: 300000 }); // 5 minutos
+  }, { timeout: 600000 }); // 10 minutos
 
   console.log('¡Autenticación con SMS completada exitosamente!');
   await page.waitForTimeout(5000);
