@@ -1,57 +1,55 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
-async function ejecutarLogin(page, user, pass) {
-  console.log('Abriendo pantalla de autenticacion de Siigo...');
-  await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+const isCI = !!process.env.CI;
+const sessionPath = path.join(__dirname, 'siigo_session.json');
 
-  console.log('Ingresando credenciales...');
-  const userInput = page.locator('#siigoSignInName');
-  await userInput.waitFor({ state: 'attached', timeout: 30000 });
-  await userInput.fill(user);
+async function ejecutarLoginInteractivo() {
+  console.log('\n======================================================');
+  console.log('⚠️ SE REQUIERE VERIFICACIÓN / RENOVACIÓN DE SESIÓN EN SIIGO');
+  console.log('👉 Se abrirá la ventana de Siigo en tu pantalla.');
+  console.log('👉 Por favor inicia sesión e ingresa el código SMS.');
+  console.log('======================================================\n');
 
-  const passInput = page.locator('#siigoPassword');
-  await passInput.fill(pass);
-
-  console.log('Enviando formulario de acceso...');
-  const nextBtn = page.locator('#siigoNext');
-  await nextBtn.click();
-
-  console.log('Esperando redireccion a Siigo Nube...');
-  await page.waitForURL(url => !url.href.includes('account.siigo.com'), { timeout: 60000 });
-  console.log('Autenticacion inicial completada.');
-}
-
-(async () => {
-  const user = process.env.SIIGO_USER;
-  const pass = process.env.SIIGO_PASS;
-  const storageStateRaw = process.env.SIIGO_STORAGE_STATE;
-
-  const tempStatePath = path.join(__dirname, 'siigo_session.json');
-  const contextOptions = {
-    acceptDownloads: true,
-    viewport: { width: 1366, height: 768 }
-  };
-
-  let hasStoredSession = false;
-  if (storageStateRaw && storageStateRaw.trim().length > 10) {
-    try {
-      fs.writeFileSync(tempStatePath, storageStateRaw.trim());
-      contextOptions.storageState = tempStatePath;
-      hasStoredSession = true;
-      console.log('Se detecto sesion guardada en SIIGO_STORAGE_STATE.');
-    } catch (e) {
-      console.warn('No se pudo escribir archivo temporal de sesion:', e.message);
-    }
-  }
-
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext(contextOptions);
+  const browser = await chromium.launch({
+    headless: false,
+    args: ['--start-maximized']
+  });
+  const context = await browser.newContext({
+    viewport: null,
+    acceptDownloads: true
+  });
   const page = await context.newPage();
 
-  // Interceptar descargas y respuestas de archivos
-  let downloadedFilePath = null;
+  configurarInterceptores(page);
+
+  await page.goto('https://siigonube.siigo.com/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  console.log('Esperando a que completes la autenticación y el código SMS en pantalla...');
+  await page.waitForFunction(() => {
+    const href = window.location.href;
+    return !href.includes('account.siigo.com') &&
+           !href.includes('openid-callback') &&
+           !href.includes('oauth2') &&
+           !href.includes('#/login') &&
+           (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
+  }, { timeout: 300000 }); // Hasta 5 minutos para ingresar credenciales y SMS
+
+  console.log('¡Autenticación con SMS completada exitosamente!');
+  await page.waitForTimeout(5000);
+
+  // Guardar la nueva sesión para que los próximos días corra en segundo plano
+  await context.storageState({ path: sessionPath });
+  console.log('✅ Sesión actualizada y guardada en siigo_session.json.');
+
+  return { browser, context, page };
+}
+
+let downloadedFilePath = null;
+
+function configurarInterceptores(page) {
   page.on('download', async (download) => {
     console.log('Evento de descarga detectado:', download.suggestedFilename());
     const outputDir = path.join(__dirname, 'reportes');
@@ -70,88 +68,142 @@ async function ejecutarLogin(page, user, pass) {
       console.log('Respuesta sospechosa de archivo:', url, 'Disposition:', disposition);
     }
   });
+}
+
+(async () => {
+  let browser = null;
+  let context = null;
+  let page = null;
+
+  // 1. Preparar contexto con sesión previa si existe
+  const contextOptions = {
+    acceptDownloads: true,
+    viewport: { width: 1366, height: 768 }
+  };
+
+  const storageStateRaw = process.env.SIIGO_STORAGE_STATE;
+  let hasStoredSession = false;
+
+  if (storageStateRaw && storageStateRaw.trim().length > 10) {
+    try {
+      fs.writeFileSync(sessionPath, storageStateRaw.trim());
+      contextOptions.storageState = sessionPath;
+      hasStoredSession = true;
+      console.log('Se detectó sesión guardada en SIIGO_STORAGE_STATE.');
+    } catch (e) {
+      console.warn('No se pudo escribir archivo de sesión desde env:', e.message);
+    }
+  } else if (fs.existsSync(sessionPath)) {
+    try {
+      const content = fs.readFileSync(sessionPath, 'utf8');
+      if (content && content.trim().length > 10) {
+        contextOptions.storageState = sessionPath;
+        hasStoredSession = true;
+        console.log('Se detectó archivo local siigo_session.json.');
+      }
+    } catch (e) {
+      console.warn('Error leyendo siigo_session.json local:', e.message);
+    }
+  }
 
   try {
-    if (hasStoredSession) {
-      console.log('1. Accediendo a Siigo con la sesion autenticada guardada...');
-      await page.goto('https://siigonube.siigo.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
-      
-      console.log('2. Esperando consolidacion de sesion y callbacks OAuth...');
-      // Esperar activamente a que terminen las redirecciones de Microsoft B2C / Siigo
-      await page.waitForFunction(() => {
-        const href = window.location.href;
-        return !href.includes('account.siigo.com') && 
-               !href.includes('openid-callback') && 
-               !href.includes('oauth2') &&
-               (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'));
-      }, { timeout: 60000 });
+    let sessionValida = false;
 
-      // Esperar estabilizacion del SPA de Siigo
-      await page.waitForTimeout(6000);
-      console.log('¡Sesion autenticada confirmada! URL actual:', page.url());
-    } else {
-      console.log('1. No hay sesion guardada. Iniciando login tradicional...');
-      if (!user || !pass) {
-        console.error('Faltan las credenciales SIIGO_USER o SIIGO_PASS');
-        process.exit(1);
+    if (hasStoredSession) {
+      console.log('1. Intentando acceso en segundo plano con la sesión guardada...');
+      browser = await chromium.launch({ headless: true });
+      context = await browser.newContext(contextOptions);
+      page = await context.newPage();
+      configurarInterceptores(page);
+
+      await page.goto('https://siigonube.siigo.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      console.log('2. Verificando estado de la sesión...');
+
+      try {
+        await page.waitForFunction(() => {
+          const href = window.location.href;
+          return (!href.includes('account.siigo.com') && 
+                  !href.includes('openid-callback') && 
+                  !href.includes('oauth2') &&
+                  !href.includes('#/login') &&
+                  (href.includes('siigonube.siigo.com') || href.includes('siigonube2.siigo.com'))) ||
+                  href.includes('account.siigo.com') ||
+                  href.includes('#/login');
+        }, { timeout: 30000 });
+
+        await page.waitForTimeout(4000);
+        const currentUrl = page.url();
+        console.log('URL actual tras comprobación:', currentUrl);
+
+        if (!currentUrl.includes('account.siigo.com') && !currentUrl.includes('#/login')) {
+          sessionValida = true;
+          console.log('✅ Sesión válida y activa. Continuando en segundo plano.');
+        } else {
+          console.log('⚠️ La sesión guardada ha expirado o Siigo solicita login/SMS.');
+        }
+      } catch (errWait) {
+        console.log('Timeout verificando sesión guardada:', errWait.message);
       }
-      await ejecutarLogin(page, user, pass);
-      console.log('Esperando carga del entorno inicial...');
-      await page.waitForTimeout(6000);
     }
 
-    // Identificar el host/cluster actual asignado a la empresa (ej: siigonube2.siigo.com)
+    // Si la sesión no es válida y estamos en entorno local, abrir navegador interactivo
+    if (!sessionValida) {
+      if (!isCI) {
+        if (browser) {
+          try { await browser.close(); } catch (_) {}
+        }
+        const interactivo = await ejecutarLoginInteractivo();
+        browser = interactivo.browser;
+        context = interactivo.context;
+        page = interactivo.page;
+      } else {
+        console.error('Error: Sesión expirada en entorno desatendido CI (GitHub Actions).');
+        process.exit(1);
+      }
+    }
+
+    // 3. Navegar al reporte en el cluster asignado
     const currentOrigin = new URL(page.url()).origin;
     const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
     console.log('3. Navegando al reporte contable en:', reportUrl);
     await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    
+
     console.log('4. Esperando carga de la vista del reporte...');
     await page.waitForTimeout(8000);
     console.log('URL actual tras navegar al reporte:', page.url());
 
-    // Si la URL cambio a root o redirigio, forzar navegacion interna por hash
     if (!page.url().includes('reports-excel/1979')) {
-      console.log('Forzando navegacion hash interna a #/reports-excel/1979...');
+      console.log('Forzando navegación hash interna a #/reports-excel/1979...');
       await page.evaluate(() => { window.location.hash = '#/reports-excel/1979'; });
       await page.waitForTimeout(6000);
     }
 
-    // Click en Generar reporte
-    console.log('5. Buscando boton Generar reporte...');
+    // 5. Pulsar Generar reporte
+    console.log('5. Buscando botón Generar reporte...');
     const genButton = page.locator('button:has-text("Generar reporte")').first();
     await genButton.waitFor({ state: 'visible', timeout: 35000 });
-    console.log('Pulsando boton Generar reporte...');
+    console.log('Pulsando botón Generar reporte...');
     await genButton.click();
     await page.waitForTimeout(3000);
 
     // Opciones tras click
-    const optionsAfterClick = await page.evaluate(() => {
-      const elements = Array.from(document.querySelectorAll('button, a, li, span, div[role="menuitem"], div[role="option"]'));
-      return elements
-        .map(el => ({ tag: el.tagName.toLowerCase(), text: (el.innerText || '').trim() }))
-        .filter(el => /excel|txt|descargar|generar/i.test(el.text));
-    });
-    console.log('Opciones detectadas:', JSON.stringify(optionsAfterClick, null, 2));
-
-    // Si hay opcion Excel, hacerle click
     const excelOption = page.locator('button, a, li, span, div[role="menuitem"]').filter({ hasText: /^Excel$/i }).first();
     if (await excelOption.count() > 0 && await excelOption.isVisible()) {
-      console.log('Pulsando opcion Excel...');
+      console.log('Pulsando opción Excel...');
       await excelOption.click();
       await page.waitForTimeout(3000);
     } else {
       const linkExcel = page.locator('a:has-text("Excel"), button:has-text("Excel")').first();
       if (await linkExcel.count() > 0 && await linkExcel.isVisible()) {
-        console.log('Pulsando enlace/boton Excel...');
+        console.log('Pulsando enlace/botón Excel...');
         await linkExcel.click();
         await page.waitForTimeout(3000);
       }
     }
 
-    // Esperar descarga
-    console.log('6. Esperando generacion/descarga del archivo...');
-    for (let i = 0; i < 30; i++) {
+    // 6. Esperar descarga
+    console.log('6. Esperando generación y descarga del archivo...');
+    for (let i = 0; i < 35; i++) {
       if (downloadedFilePath && fs.existsSync(downloadedFilePath)) {
         console.log('¡Archivo descargado exitosamente!', downloadedFilePath);
         break;
@@ -159,47 +211,46 @@ async function ejecutarLogin(page, user, pass) {
       await page.waitForTimeout(2000);
     }
 
-    // Comprobar si se creo el archivo en la carpeta reportes
+    // 7. Procesar y actualizar dashboard local
     const outputDir = path.join(__dirname, 'reportes');
     if (fs.existsSync(outputDir)) {
       const files = fs.readdirSync(outputDir);
       console.log('Archivos en carpeta reportes:', files);
       if (files.some(f => f.endsWith('.xlsx') || f.endsWith('.zip') || f.endsWith('.csv'))) {
         console.log('7. Reporte generado y verificado.');
-        await browser.close();
+        try { await browser.close(); } catch (_) {}
 
-        // Procesar Excel y actualizar aplicativo interactivo (index.html)
         console.log('8. Procesando Excel y actualizando index.html...');
         try {
-          const { execSync } = require('child_process');
           execSync('node generar_dashboard.js', { stdio: 'inherit' });
-          console.log('Dashboard index.html actualizado con exito.');
-          try {
-            execSync('git add index.html', { stdio: 'inherit' });
-          } catch (_) {}
+          console.log('✅ Dashboard index.html actualizado con éxito.');
         } catch (genErr) {
           console.error('Advertencia al generar dashboard:', genErr.message || genErr);
         }
 
+        console.log('\n======================================================');
+        console.log('🎉 ¡ACTUALIZACIÓN COMPLETADA CON ÉXITO!');
+        console.log('======================================================\n');
         process.exit(0);
       }
     }
 
-    console.log('Texto visible en la pagina tras la solicitud:');
-    const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 1500));
-    console.log(bodyText);
     await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
+    throw new Error('No se detectó el archivo Excel descargado.');
 
   } catch (error) {
-    console.error('Error durante la ejecucion:', error.message || error);
+    console.error('Error durante la ejecución:', error.message || error);
     try {
-      await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
+      if (page) await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
     } catch (_) {}
     process.exit(1);
   } finally {
-    if (fs.existsSync(tempStatePath)) {
-      try { fs.unlinkSync(tempStatePath); } catch (_) {}
+    // Si estamos en CI, limpiar archivo temporal de secretos
+    if (isCI && fs.existsSync(sessionPath)) {
+      try { fs.unlinkSync(sessionPath); } catch (_) {}
     }
-    await browser.close();
+    if (browser) {
+      try { await browser.close(); } catch (_) {}
+    }
   }
 })();
