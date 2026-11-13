@@ -270,128 +270,125 @@ async function ejecutarLoginInteractivo() {
 
   try {
     // 3. Navegar al reporte contable
-    console.log('3. Buscando reporte contable mediante buscador rápido...');
-    await page.waitForTimeout(6000);
+    console.log('3. Navegando al reporte: Movimiento auxiliar de cuenta contable por tercero...');
+    await page.waitForTimeout(4000);
 
-    // Activar el buscador rápido mediante DOM directo para evitar bloqueos de viewport
-    await page.evaluate(() => {
-      const searchIcon = document.querySelector('.imgQuickSearch') ||
-                         document.querySelector('[class*="quickSearch"]') ||
-                         document.querySelector('[class*="search"]') ||
-                         document.querySelector('button[aria-label*="Buscar"]');
-      if (searchIcon) {
-        searchIcon.click();
+    const currentOrigin = new URL(page.url()).origin;
+    const targetReportPath = '/#/reports/2000/5516?TabID=1754&pTabID=1754&rReport=1';
+    const targetReportUrl = `${currentOrigin}${targetReportPath}`;
+
+    console.log('Navegando a la URL del reporte confirmada:', targetReportUrl);
+    try {
+      await page.goto(targetReportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    } catch (eNav) {
+      console.warn('Aviso en goto directo, intentando por cambio de hash:', eNav.message);
+      await page.evaluate((path) => {
+        window.location.hash = path.replace('/#', '');
+      }, targetReportPath);
+    }
+    await page.waitForTimeout(8000);
+
+    // Si aún no está en la vista del reporte o redirigió, intentar clic en Reportes del menú
+    if (!page.url().includes('5516') && !page.url().includes('1754')) {
+      console.log('Intentando acceso por menú lateral Reportes...');
+      await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a, button, li, span'));
+        const rep = links.find(el => (el.innerText || '').trim().toLowerCase() === 'reportes');
+        if (rep) rep.click();
+      });
+      await page.waitForTimeout(4000);
+
+      await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a, button, div, span, h4, h5, p'));
+        const item = links.find(el => /movimiento auxiliar de cuenta contable por tercero/i.test((el.innerText || '').trim()) || /movimiento auxiliar de tercero/i.test((el.innerText || '').trim()));
+        if (item) item.click();
+      });
+      await page.waitForTimeout(6000);
+    }
+
+    console.log('URL actual en pantalla del reporte:', page.url());
+
+    // 4. Analizar controles en pantalla
+    console.log('4. Analizando controles y filtros en pantalla...');
+    const inputsInfo = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('input, select, button, a')).map(el => ({
+        tag: el.tagName.toLowerCase(),
+        id: el.id,
+        name: el.name,
+        type: el.type,
+        placeholder: el.placeholder,
+        value: el.value,
+        aria: el.getAttribute('aria-label'),
+        title: el.getAttribute('title'),
+        text: (el.innerText || '').trim().slice(0, 30)
+      })).filter(el => el.text || el.placeholder || el.title || el.aria || el.type === 'date' || el.type === 'text');
+    });
+    console.log('Controles detectados en el formulario:', JSON.stringify(inputsInfo.slice(0, 30)));
+
+    // Si existe botón de Buscar / Aplicar filtros
+    const searchBtn = page.locator('button:has-text("Buscar"), button:has-text("Consultar"), button:has-text("Aplicar filtros"), button:has-text("Aplicar")').first();
+    if (await searchBtn.count() > 0 && await searchBtn.isVisible()) {
+      console.log('Pulsando botón Buscar/Aplicar filtros...');
+      try {
+        await searchBtn.click();
+        await page.waitForTimeout(5000);
+      } catch (errSearch) {
+        console.warn('Aviso al pulsar Buscar:', errSearch.message);
       }
-    });
-    await page.waitForTimeout(2000);
+    }
 
-    // Escribir en el campo de búsqueda
-    const searchFilled = await page.evaluate(() => {
-      const inp = document.querySelector('input[placeholder*="Buscar opción de menú" i]') ||
-                  document.querySelector('input[placeholder*="Buscar" i]') ||
-                  document.querySelector('input[type="search"]') ||
-                  document.querySelector('.quickSearch input') ||
-                  document.querySelector('input');
-      if (inp) {
-        inp.focus();
-        inp.value = 'Movimiento auxiliar';
-        inp.dispatchEvent(new Event('input', { bubbles: true }));
-        inp.dispatchEvent(new Event('change', { bubbles: true }));
-        inp.dispatchEvent(new KeyboardEvent('keyup', { key: 'r', bubbles: true }));
-        return true;
+    // 5. Pulsar botón con el logo / icono de Excel
+    console.log('5. Buscando botón de exportación a Excel...');
+    const excelSelectors = [
+      'button:has([class*="excel" i])',
+      'a:has([class*="excel" i])',
+      'button:has(img[src*="excel" i])',
+      'a:has(img[src*="excel" i])',
+      '[title*="excel" i]',
+      '[aria-label*="excel" i]',
+      'button:has-text("Excel")',
+      'a:has-text("Excel")',
+      'button:has(.fa-file-excel)',
+      'i[class*="excel" i]',
+      '.icon-excel',
+      '[data-testid*="excel" i]'
+    ];
+
+    let clickedExcel = false;
+    for (const sel of excelSelectors) {
+      const loc = page.locator(sel).first();
+      if (await loc.count() > 0 && await loc.isVisible()) {
+        console.log(`Pulsando botón de Excel con selector: ${sel}...`);
+        await loc.click();
+        clickedExcel = true;
+        await page.waitForTimeout(3000);
+        break;
       }
-      return false;
-    });
-    console.log('¿Campo de búsqueda rellenado con éxito?:', searchFilled);
-    await page.waitForTimeout(3500);
+    }
 
-    // Listar resultados arrojados
-    const searchOptions = await page.evaluate(() => {
-      const items = Array.from(document.querySelectorAll('a, li, [role="option"], div, span'))
-        .map(el => ({
-          text: (el.innerText || '').trim(),
-          href: el.getAttribute('href') || '',
-          tag: el.tagName.toLowerCase()
-        }))
-        .filter(item => /movimiento auxiliar/i.test(item.text) && item.text.length < 80);
-      return items;
-    });
-    console.log('Opciones de búsqueda encontradas:', JSON.stringify(searchOptions));
-
-    // Si hay una opción encontrada, hacer clic
-    let optionClicked = false;
-    if (searchOptions.length > 0) {
-      console.log('Haciendo clic en la opción de reporte encontrada...');
-      optionClicked = await page.evaluate(() => {
-        const els = Array.from(document.querySelectorAll('a, li, [role="option"], div, span'));
-        const target = els.find(el => /movimiento auxiliar/i.test((el.innerText || '').trim()));
-        if (target) {
-          target.click();
+    if (!clickedExcel) {
+      console.log('Intentando clic en icono de Excel por DOM directo...');
+      clickedExcel = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll('button, a, i, span, div, img'));
+        const el = all.find(e => {
+          const title = (e.getAttribute('title') || '').toLowerCase();
+          const aria = (e.getAttribute('aria-label') || '').toLowerCase();
+          const cls = (e.className || '').toString().toLowerCase();
+          const src = (e.getAttribute('src') || '').toLowerCase();
+          const txt = (e.innerText || '').trim().toLowerCase();
+          return title.includes('excel') || aria.includes('excel') || cls.includes('excel') || src.includes('excel') || txt === 'excel';
+        });
+        if (el) {
+          el.click();
           return true;
         }
         return false;
       });
-      await page.waitForTimeout(8000);
-    }
-
-    // Volcar todos los elementos del menú lateral y navegación
-    const navItems = await page.evaluate(() => {
-      const items = [];
-      document.querySelectorAll('nav, aside, ul, li, a, button').forEach(el => {
-        const text = (el.innerText || '').trim();
-        const aria = el.getAttribute('aria-label') || '';
-        const title = el.getAttribute('title') || '';
-        const href = el.getAttribute('href') || '';
-        if (text || aria || title || href) {
-          items.push({ text: text.slice(0, 30), aria, title, href });
-        }
-      });
-      return items.filter(i => /report|informe|contab|movim/i.test(i.text) || /report|informe|contab|movim/i.test(i.aria) || /report|informe|contab|movim/i.test(i.title) || /report/i.test(i.href)).slice(0, 20);
-    });
-    console.log('Elementos de navegación relacionados con reportes/contabilidad:', JSON.stringify(navItems));
-
-    // Si aún no está en el reporte, intentar navegación directa
-    if (!page.url().includes('reports-excel') && !page.url().includes('report')) {
-      const currentOrigin = new URL(page.url()).origin;
-      const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
-      console.log('Navegando directamente por URL:', reportUrl);
-      await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(8000);
-    }
-
-    console.log('URL actual tras navegación:', page.url());
-
-    // 5. Pulsar Generar reporte
-    console.log('5. Buscando botón Generar reporte...');
-    const genButton = page.locator('button:has-text("Generar reporte"), a:has-text("Generar reporte"), button:has-text("Descargar"), button:has-text("Exportar")').first();
-    try {
-      await genButton.waitFor({ state: 'visible', timeout: 35000 });
-    } catch (btnErr) {
-      console.warn('Botón de reporte no visible de inmediato. Volcado de texto visible:');
-      const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 1000));
-      console.warn(bodySnippet);
-      throw btnErr;
-    }
-    console.log('Pulsando botón Generar reporte...');
-    await genButton.click();
-    await page.waitForTimeout(3000);
-
-    // Opciones tras click
-    const excelOption = page.locator('button, a, li, span, div[role="menuitem"]').filter({ hasText: /^Excel$/i }).first();
-    if (await excelOption.count() > 0 && await excelOption.isVisible()) {
-      console.log('Pulsando opción Excel...');
-      await excelOption.click();
+      console.log('¿Clic en Excel por DOM?:', clickedExcel);
       await page.waitForTimeout(3000);
-    } else {
-      const linkExcel = page.locator('a:has-text("Excel"), button:has-text("Excel")').first();
-      if (await linkExcel.count() > 0 && await linkExcel.isVisible()) {
-        console.log('Pulsando enlace/botón Excel...');
-        await linkExcel.click();
-        await page.waitForTimeout(3000);
-      }
     }
 
-    // 6. Esperar descarga
+        // 6. Esperar descarga
     console.log('6. Esperando generación y descarga del archivo...');
     for (let i = 0; i < 35; i++) {
       if (downloadedFilePath && fs.existsSync(downloadedFilePath)) {
