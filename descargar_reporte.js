@@ -227,22 +227,43 @@ async function ejecutarLoginInteractivo() {
     const currentOrigin = new URL(page.url()).origin;
     const reportUrl = `${currentOrigin}/#/reports-excel/1979`;
     console.log('3. Navegando al reporte contable en:', reportUrl);
-    await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-    console.log('4. Esperando carga de la vista del reporte...');
+    
+    // Esperar a que el dashboard de Siigo termine de montar componentes iniciales
     await page.waitForTimeout(8000);
-    console.log('URL actual tras navegar al reporte:', page.url());
 
+    // Navegar directamente a la ruta del reporte
+    console.log('Navegando a ruta con reload completo...');
+    await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(10000);
+
+    console.log('URL actual tras primer intento:', page.url());
     if (!page.url().includes('reports-excel/1979')) {
-      console.log('Forzando navegación hash interna a #/reports-excel/1979...');
-      await page.evaluate(() => { window.location.hash = '#/reports-excel/1979'; });
-      await page.waitForTimeout(6000);
+      console.log('Forzando navegación directa por asignación href...');
+      await page.evaluate((target) => { window.location.href = target; }, reportUrl);
+      await page.waitForTimeout(8000);
+      console.log('URL actual tras asignación href:', page.url());
     }
+
+    // Comprobar si el menú lateral o la barra de búsqueda está presente
+    const pageLinks = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('a, button, div[role="button"], span'))
+        .map(el => (el.innerText || '').trim())
+        .filter(t => t.length > 2 && t.length < 50)
+        .slice(0, 30);
+    });
+    console.log('Elementos visibles principales en la página:', JSON.stringify(pageLinks));
 
     // 5. Pulsar Generar reporte
     console.log('5. Buscando botón Generar reporte...');
-    const genButton = page.locator('button:has-text("Generar reporte")').first();
-    await genButton.waitFor({ state: 'visible', timeout: 35000 });
+    const genButton = page.locator('button:has-text("Generar reporte"), a:has-text("Generar reporte")').first();
+    try {
+      await genButton.waitFor({ state: 'visible', timeout: 35000 });
+    } catch (btnErr) {
+      console.warn('Botón Generar reporte no visible de inmediato. Volcado de texto visible:');
+      const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 1000));
+      console.warn(bodySnippet);
+      throw btnErr;
+    }
     console.log('Pulsando botón Generar reporte...');
     await genButton.click();
     await page.waitForTimeout(3000);
