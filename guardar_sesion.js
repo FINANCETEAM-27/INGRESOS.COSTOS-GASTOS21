@@ -19,7 +19,7 @@ const path = require('path');
   await page.goto('https://siigonube.siigo.com/#/login');
 
   try {
-    await page.waitForURL(url => url.href.includes('siigonube.siigo.com') && !url.href.includes('account.siigo.com') && !url.href.includes('/login'), { timeout: 300000 });
+    await page.waitForURL(url => url.href.includes('siigonube.siigo.com') && !url.href.includes('account.siigo.com') && !url.href.includes('/login'), { timeout: 600000 });
     
     console.log('Inicio de sesion detectado. Esperando consolidacion de cookies y tokens...');
     await page.waitForTimeout(6000);
