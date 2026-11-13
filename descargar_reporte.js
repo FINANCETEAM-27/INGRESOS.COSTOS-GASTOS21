@@ -224,41 +224,78 @@ async function ejecutarLoginInteractivo() {
 
   try {
     // 3. Navegar al reporte contable
-    console.log('3. Buscando reporte contable...');
+    console.log('3. Buscando reporte contable mediante buscador rápido...');
     await page.waitForTimeout(6000);
 
-    // Intentar abrir el reporte buscando en Siigo Nube
-    console.log('Intentando abrir buscador global o menú...');
-    const searchTrigger = page.locator('input[placeholder*="Buscar opción de menú" i], [aria-label*="Buscar" i], button:has(.fa-search), .fa-search').first();
-    let searchOpened = false;
+    // Activar el buscador rápido mediante DOM directo para evitar bloqueos de viewport
+    await page.evaluate(() => {
+      const searchIcon = document.querySelector('.imgQuickSearch') ||
+                         document.querySelector('[class*="quickSearch"]') ||
+                         document.querySelector('[class*="search"]') ||
+                         document.querySelector('button[aria-label*="Buscar"]');
+      if (searchIcon) {
+        searchIcon.click();
+      }
+    });
+    await page.waitForTimeout(2000);
 
-    if (await searchTrigger.count() > 0 && await searchTrigger.isVisible()) {
-      console.log('Activando buscador...');
-      await searchTrigger.click();
-      await page.waitForTimeout(1500);
-      searchOpened = true;
+    // Escribir en el campo de búsqueda
+    const searchFilled = await page.evaluate(() => {
+      const inp = document.querySelector('input[placeholder*="Buscar opción de menú" i]') ||
+                  document.querySelector('input[placeholder*="Buscar" i]') ||
+                  document.querySelector('input[type="search"]') ||
+                  document.querySelector('.quickSearch input') ||
+                  document.querySelector('input');
+      if (inp) {
+        inp.focus();
+        inp.value = 'Movimiento auxiliar';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent('keyup', { key: 'r', bubbles: true }));
+        return true;
+      }
+      return false;
+    });
+    console.log('¿Campo de búsqueda rellenado con éxito?:', searchFilled);
+    await page.waitForTimeout(3500);
+
+    // Listar resultados arrojados
+    const searchOptions = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('a, li, [role="option"], div, span'))
+        .map(el => ({
+          text: (el.innerText || '').trim(),
+          href: el.getAttribute('href') || '',
+          tag: el.tagName.toLowerCase()
+        }))
+        .filter(item => /movimiento auxiliar/i.test(item.text) && item.text.length < 80);
+      return items;
+    });
+    console.log('Opciones de búsqueda encontradas:', JSON.stringify(searchOptions));
+
+    // Si hay una opción encontrada, hacer clic
+    let optionClicked = false;
+    if (searchOptions.length > 0) {
+      console.log('Haciendo clic en la opción de reporte encontrada...');
+      optionClicked = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('a, li, [role="option"], div, span'));
+        const target = els.find(el => /movimiento auxiliar/i.test((el.innerText || '').trim()));
+        if (target) {
+          target.click();
+          return true;
+        }
+        return false;
+      });
+      await page.waitForTimeout(8000);
     }
 
-    const searchInput = page.locator('input[placeholder*="Buscar" i], input[type="search"]:visible, input[type="text"]:visible').first();
-    if (await searchInput.count() > 0 && await searchInput.isVisible()) {
-      console.log('Escribiendo "Movimiento auxiliar" en el buscador...');
-      await searchInput.fill('Movimiento auxiliar');
-      await page.waitForTimeout(3000);
-
-      // Ver opciones arrojadas por la búsqueda
-      const searchOptions = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('li, a, [role="option"], div'))
-          .map(el => (el.innerText || '').trim())
-          .filter(t => /movimiento auxiliar/i.test(t) && t.length < 80);
+    // Si no se encontró por búsqueda o no abrió, intentar abrir menú Reportes
+    if (!page.url().includes('reports') && !page.url().includes('1979')) {
+      console.log('Intentando clic en menú Reportes...');
+      await page.evaluate(() => {
+        const reportMenu = Array.from(document.querySelectorAll('a, button, span, div')).find(el => /^Reportes$/i.test((el.innerText || '').trim()));
+        if (reportMenu) reportMenu.click();
       });
-      console.log('Opciones de búsqueda encontradas:', Array.from(new Set(searchOptions)));
-
-      const targetOption = page.locator('li, a, [role="option"]').filter({ hasText: /movimiento auxiliar/i }).first();
-      if (await targetOption.count() > 0 && await targetOption.isVisible()) {
-        console.log('Pulsando opción de reporte encontrada en búsqueda...');
-        await targetOption.click();
-        await page.waitForTimeout(8000);
-      }
+      await page.waitForTimeout(4000);
     }
 
     // Si aún no está en el reporte, intentar navegación directa
