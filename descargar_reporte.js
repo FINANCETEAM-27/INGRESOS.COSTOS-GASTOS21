@@ -320,30 +320,51 @@ async function ejecutarLoginInteractivo() {
 
     console.log('URL actual en pantalla del reporte:', page.url());
 
-    // 4. Analizar controles en pantalla
-    console.log('4. Analizando controles y filtros en pantalla...');
-    const inputsInfo = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('input, select, button, a')).map(el => ({
-        tag: el.tagName.toLowerCase(),
-        id: el.id,
-        name: el.name,
-        type: el.type,
-        placeholder: el.placeholder,
-        value: el.value,
-        aria: el.getAttribute('aria-label'),
-        title: el.getAttribute('title'),
-        text: (el.innerText || '').trim().slice(0, 30)
-      })).filter(el => el.text || el.placeholder || el.title || el.aria || el.type === 'date' || el.type === 'text');
-    });
-    console.log('Controles detectados en el formulario:', JSON.stringify(inputsInfo.slice(0, 30)));
+    // 4. Configurar fechas del reporte (desde enero hasta la fecha actual)
+    console.log('4. Configurando filtros de fecha (desde enero del año en curso)...');
+    await page.waitForTimeout(5000);
 
-    // Si existe botón de Buscar / Aplicar filtros
-    const searchBtn = page.locator('button:has-text("Buscar"), button:has-text("Consultar"), button:has-text("Aplicar filtros"), button:has-text("Aplicar")').first();
+    const filterApplied = await page.evaluate(() => {
+      const currentYear = new Date().getFullYear();
+      let changed = false;
+
+      // Buscar inputs de tipo fecha o con valor dd/mm/yyyy
+      const allInputs = Array.from(document.querySelectorAll('input'));
+      const dateInputs = allInputs.filter(inp => /^\d{2}\/\d{2}\/\d{4}$/.test((inp.value || '').trim()));
+      
+      if (dateInputs.length >= 1) {
+        console.log('Modificando fecha inicial a 01/01/' + currentYear);
+        dateInputs[0].value = `01/01/${currentYear}`;
+        dateInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+        dateInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+        changed = true;
+      }
+
+      // Si hay un selector de periodo (e.g. 'Este mes')
+      const selects = Array.from(document.querySelectorAll('select'));
+      for (const sel of selects) {
+        for (const opt of sel.options) {
+          if (/año|ano|acumulado/i.test(opt.text)) {
+            sel.value = opt.value;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            changed = true;
+            break;
+          }
+        }
+      }
+      return changed;
+    });
+    console.log('¿Filtro de fecha desde enero modificado?:', filterApplied);
+    await page.waitForTimeout(2000);
+
+    // Pulsar botón Buscar para regenerar la tabla con el rango completo
+    const searchBtn = page.locator('button:has-text("Buscar")').first();
     if (await searchBtn.count() > 0 && await searchBtn.isVisible()) {
-      console.log('Pulsando botón Buscar/Aplicar filtros...');
+      console.log('Pulsando botón Buscar para aplicar filtro desde enero...');
       try {
         await searchBtn.click();
-        await page.waitForTimeout(5000);
+        console.log('Esperando a que la tabla cargue los movimientos...');
+        await page.waitForTimeout(8000);
       } catch (errSearch) {
         console.warn('Aviso al pulsar Buscar:', errSearch.message);
       }
@@ -355,93 +376,92 @@ async function ejecutarLoginInteractivo() {
     const initialFiles = new Set(fs.readdirSync(outputDir));
     console.log('Archivos existentes antes de la descarga:', Array.from(initialFiles));
 
-    // Esperar a que DevExpress / Single-SPA / iframes terminen de montar la vista
-    console.log('Esperando a que la vista y componentes terminen de cargar (15s)...');
-    await page.waitForTimeout(15000);
+    // Esperar a que la tabla y el botón Agrupar / Excel estén presentes
+    console.log('Esperando a que el botón Agrupar y la barra de herramientas estén visibles...');
+    try {
+      await page.locator('text="Agrupar"').first().waitFor({ state: 'visible', timeout: 30000 });
+      console.log('✓ Tabla y controles de reporte cargados exitosamente.');
+    } catch (_) {
+      console.warn('Aviso: Agrupar no apareció en 30s, continuando con la búsqueda del botón de Excel...');
+    }
 
-    const frames = page.frames();
-    console.log(`Frames detectados (${frames.length}):`);
-    frames.forEach((f, idx) => console.log(`  Frame [${idx}]: name="${f.name()}" url="${f.url()}"`));
+    await page.waitForTimeout(3000);
 
     // 5. Pulsar botón con el logo / icono de Excel
-    console.log('5. Buscando botón de exportación a Excel en todos los frames...');
-    const excelSelectors = [
-      'button:has([class*="excel" i])',
-      'a:has([class*="excel" i])',
-      'div:has([class*="excel" i])',
-      'button:has(img[src*="excel" i])',
-      'a:has(img[src*="excel" i])',
-      '[title*="excel" i]',
-      '[aria-label*="excel" i]',
-      'button:has-text("Excel")',
-      'a:has-text("Excel")',
-      '.dx-datagrid-export-button',
-      '.dx-icon-export-to-excel',
-      '.dx-icon-exportexcel',
-      '[class*="export-to-excel" i]',
-      '[class*="exportexcel" i]',
-      'button:has(.fa-file-excel)',
-      'i[class*="excel" i]',
-      '.icon-excel',
-      '[data-testid*="excel" i]'
-    ];
-
-    let clickedExcel = false;
-    const contexts = [page, ...frames];
-    for (const ctx of contexts) {
-      if (clickedExcel) break;
-      for (const sel of excelSelectors) {
-        try {
-          const loc = ctx.locator(sel).first();
-          if (await loc.count() > 0 && await loc.isVisible()) {
-            console.log(`Pulsando botón de Excel con selector: ${sel}...`);
-            await loc.click();
-            clickedExcel = true;
-            await page.waitForTimeout(3000);
-
-            // Si se abre un menú desplegable de exportación
-            const menuOptions = ctx.locator('.dx-menu-item, .dropdown-item, [role="menuitem"], span:has-text("Excel")');
-            if (await menuOptions.count() > 0 && await menuOptions.first().isVisible()) {
-              console.log('Pulsando opción en menú desplegable de exportación...');
-              await menuOptions.first().click();
-              await page.waitForTimeout(2000);
-            }
-            break;
+    console.log('5. Buscando y pulsando el botón con el icono de Excel...');
+    
+    // Intentar primero clic directo sobre el botón de Excel ubicado junto a Agrupar
+    let clickedExcel = await page.evaluate(() => {
+      // 1. Buscar el elemento de texto 'Agrupar'
+      const agruparEl = Array.from(document.querySelectorAll('*')).find(el => (el.innerText || '').trim() === 'Agrupar');
+      if (agruparEl) {
+        const toolbar = agruparEl.closest('.dx-toolbar, .toolbar, div') ? agruparEl.closest('.dx-toolbar, .toolbar, div').parentElement : null;
+        if (toolbar) {
+          // Buscar botones dentro de esa barra
+          const btns = Array.from(toolbar.querySelectorAll('button, a, div[role="button"], span, i, img'));
+          const excelBtn = btns.find(b => {
+            const title = (b.getAttribute('title') || '').toLowerCase();
+            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+            const cls = (b.className || '').toString().toLowerCase();
+            const src = (b.getAttribute('src') || '').toLowerCase();
+            return title.includes('excel') || aria.includes('excel') || cls.includes('excel') || src.includes('excel') || title.includes('export') || aria.includes('export');
+          });
+          if (excelBtn) {
+            excelBtn.click();
+            return 'clicked_excel_in_toolbar';
           }
-        } catch (_) {}
+          // Si no tiene clases 'excel', buscar el último botón a la derecha de Agrupar
+          const lastBtn = toolbar.querySelector('button:last-child, a:last-child');
+          if (lastBtn && lastBtn !== agruparEl) {
+            lastBtn.click();
+            return 'clicked_last_button_in_toolbar';
+          }
+        }
       }
-    }
+
+      // 2. Búsqueda global por icono o clase de Excel
+      const allEls = Array.from(document.querySelectorAll('button, a, i, span, div, img'));
+      const target = allEls.find(e => {
+        const title = (e.getAttribute('title') || '').toLowerCase();
+        const aria = (e.getAttribute('aria-label') || '').toLowerCase();
+        const cls = (e.className || '').toString().toLowerCase();
+        const src = (e.getAttribute('src') || '').toLowerCase();
+        return title.includes('excel') || aria.includes('excel') || cls.includes('excel') || src.includes('excel') || cls.includes('fa-file-excel');
+      });
+      if (target) {
+        target.click();
+        return 'clicked_global_excel_element';
+      }
+
+      return false;
+    });
+
+    console.log('Resultado del intento de clic en Excel por DOM:', clickedExcel);
 
     if (!clickedExcel) {
-      console.log('Intentando clic en icono de Excel por DOM directo en todos los frames...');
-      for (const ctx of contexts) {
-        if (clickedExcel) break;
-        try {
-          clickedExcel = await ctx.evaluate(() => {
-            const all = Array.from(document.querySelectorAll('button, a, i, span, div, img'));
-            const el = all.find(e => {
-              const title = (e.getAttribute('title') || '').toLowerCase();
-              const aria = (e.getAttribute('aria-label') || '').toLowerCase();
-              const cls = (e.className || '').toString().toLowerCase();
-              const src = (e.getAttribute('src') || '').toLowerCase();
-              const txt = (e.innerText || '').trim().toLowerCase();
-              return title.includes('excel') || aria.includes('excel') || cls.includes('excel') || src.includes('excel') || txt === 'excel';
-            });
-            if (el) {
-              el.click();
-              return true;
-            }
-            return false;
-          });
-          if (clickedExcel) {
-            console.log('¡Clic en Excel exitoso por DOM!');
-            await page.waitForTimeout(3000);
-          }
-        } catch (_) {}
+      console.log('Intentando clic con selectores Playwright...');
+      const excelSelectors = [
+        'button:has([class*="excel" i])',
+        'a:has([class*="excel" i])',
+        'button:has(.fa-file-excel)',
+        '[title*="excel" i]',
+        '[aria-label*="excel" i]',
+        '.icon-excel',
+        'button:has-text("Excel")',
+        'a:has-text("Excel")'
+      ];
+      for (const sel of excelSelectors) {
+        const loc = page.locator(sel).first();
+        if (await loc.count() > 0 && await loc.isVisible()) {
+          console.log(`Pulsando botón con selector Playwright: ${sel}...`);
+          await loc.click();
+          clickedExcel = true;
+          break;
+        }
       }
     }
 
-    // 6. Esperar descarga del archivo nuevo
+        // 6. Esperar descarga del archivo nuevo
     console.log('6. Esperando generación y descarga del archivo...');
     let nuevoArchivoDescargado = null;
     for (let i = 0; i < 40; i++) {
