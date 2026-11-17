@@ -159,7 +159,10 @@ async function ejecutarLoginInteractivo() {
 
   const contextOptions = {
     acceptDownloads: true,
-    viewport: { width: 1440, height: 900 }
+    viewport: { width: 1440, height: 900 },
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    locale: 'es-CO',
+    timezoneId: 'America/Bogota'
   };
 
   const storageStateRaw = process.env.SIIGO_STORAGE_STATE;
@@ -193,13 +196,16 @@ async function ejecutarLoginInteractivo() {
   if (hasStoredSession) {
     try {
       console.log('1. Probando acceso con la sesión guardada previa...');
-      browser = await chromium.launch({ headless: true , args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-blink-features=AutomationControlled'
-    ] });
+      browser = await chromium.launch({
+        headless: false,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-web-security',
+          '--disable-blink-features=AutomationControlled',
+          '--window-size=1440,900'
+        ]
+      });
       context = await browser.newContext(contextOptions);
       page = await context.newPage();
       configurarInterceptores(page);
@@ -233,16 +239,22 @@ async function ejecutarLoginInteractivo() {
   if (!sessionValida) {
     if (user && pass) {
       console.log('2. Iniciando autenticación automática con credenciales configuradas...');
-      browser = await chromium.launch({ headless: isCI , args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-blink-features=AutomationControlled'
-    ] });
+      browser = await chromium.launch({
+        headless: false,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-web-security',
+          '--disable-blink-features=AutomationControlled',
+          '--window-size=1440,900'
+        ]
+      });
       context = await browser.newContext({
         acceptDownloads: true,
-        viewport: { width: 1440, height: 900 }
+        viewport: { width: 1440, height: 900 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        locale: 'es-CO',
+        timezoneId: 'America/Bogota'
       });
       page = await context.newPage();
       configurarInterceptores(page);
