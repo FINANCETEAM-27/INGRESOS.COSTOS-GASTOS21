@@ -33,7 +33,7 @@ jobs:
           SIIGO_USER: ${{ secrets.SIIGO_USER }}
           SIIGO_PASS: ${{ secrets.SIIGO_PASS }}
           SIIGO_STORAGE_STATE: ${{ secrets.SIIGO_STORAGE_STATE }}
-        run: node descargar_reporte.js
+        run: xvfb-run --auto-servernum node descargar_reporte.js
 
       - name: Guardar captura si hubo error
         if: failure()
