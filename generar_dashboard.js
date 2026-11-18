@@ -235,16 +235,34 @@ function encryptHtml(html, password) {
 }
 
 async function main() {
-  const dir = path.join(__dirname, 'reportes');
-  const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.toLowerCase().endsWith('.xlsx')).sort() : [];
-  if (!files.length) throw new Error('No hay archivos .xlsx en reportes/');
-  const excelPath = path.join(dir, files[files.length - 1]);
+  let excelPath = process.argv[2];
+  if (!excelPath || !fs.existsSync(excelPath)) {
+    const dir = path.join(__dirname, 'reportes');
+    const validFiles = fs.existsSync(dir)
+      ? fs.readdirSync(dir)
+          .filter(f => f.toLowerCase().endsWith('.xlsx') && !f.startsWith('~$'))
+          .map(f => {
+            const full = path.join(dir, f);
+            const stat = fs.statSync(full);
+            return { name: f, path: full, size: stat.size, mtime: stat.mtimeMs };
+          })
+          .filter(f => f.size > 50000)
+          .sort((a, b) => b.mtime - a.mtime)
+      : [];
+    if (!validFiles.length) throw new Error('No hay archivos .xlsx válidos (>50KB) en reportes/');
+    excelPath = validFiles[0].path;
+  }
   const templatePath = path.join(__dirname, 'plantilla_dashboard.html');
   const password = process.env.DASHBOARD_PASS || '900914237';
 
   console.log('1. Procesando archivo Excel:', excelPath);
   const P = parseAux(excelPath);
   console.log(`- Movimientos procesados: ${P.recs.length} (Año ${P.year})`);
+  if (P.last) {
+    const mStr = String(Math.floor(P.last / 100)).padStart(2, '0');
+    const dStr = String(P.last % 100).padStart(2, '0');
+    console.log(`- Fecha máxima de movimientos en el reporte: ${dStr}/${mStr}/${P.year}`);
+  }
 
   console.log('2. Construyendo cubo analítico...');
   const templateHtml = fs.readFileSync(templatePath, 'utf8');
